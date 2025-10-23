@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="card p-4">
+    <h2 class="text-center mb-4" style="color: #00B8A9;">Drone / Bird Audio Detector</h2>
+
+    <div id="drop-zone-detect" class="dropzone mb-4">
+        <p><strong>Drag and Drop your audio file (.wav / .mp3) here</strong> (Click to Select)</p>
+        <small class="text-secondary">File will be analyzed on the server.</small>
+
+        <input
+            type="file"
+            id="detect-file-input"
+            accept=".wav,.mp3"
+            style="display: none;"
+        >
+    </div>
+
+    <div id="detect-status" class="alert alert-info" role="alert">
+        Awaiting audio file upload...
+    </div>
+
+    <div class="d-flex justify-content-center mb-4">
+        <button id='analyze-audio-button' class="btn btn-success me-3" disabled>Analyze Audio</button>
+        <button id='play-audio-button' class="btn btn-secondary" disabled>Play Original Audio</button>
+    </div>
+
+    <!-- Original Audio Player -->
+    <div id='audio-player-original' class="mb-4">
+        <h5 style="color: #00B8A9;">Original Audio Player:</h5>
+    </div>
+
+    <!-- Original Audio Time Domain Graph -->
+    <div class="graph-container">
+        <div id='time-domain-graph-original' style='height: 350px;'></div>
+    </div>
+
+    <div id='audio-prediction-output' class="mt-4 text-center"></div>
+
+    <div class="graph-container mt-4">
+        <div id='audio-probabilities-graph' style='height: 300px;'></div>
+    </div>
+
+    <!-- Nyquist Frequency Analysis Section -->
+    <div id='nyquist-section' class="mt-4" style="display: none;">
+        <div class="card p-3" style="background-color: #161b22; border: 1px solid #30363d;">
+            <h4 class="text-center mb-3" style="color: #00B8A9;">Nyquist Frequency Analysis</h4>
+
+            <div class="row mb-3">
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Original Sample Rate</small>
+                        <h5 id="original-sr" style="color: #58a6ff;">16000 Hz</h5>
+                    </div>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Current Sample Rate</small>
+                        <h5 id="current-sr" style="color: #00B8A9;">16000 Hz</h5>
+                    </div>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Original Max Frequency</small>
+                        <h5 id="max-freq" style="color: #f78166;">0 Hz</h5>
+                    </div>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Nyquist Frequency</small>
+                        <h5 id="nyquist-freq" style="color: #79c0ff;">0 Hz</h5>
+                        <small class="text-secondary" style="font-size: 0.75rem;">F(nyquist) = 2 × F(max)</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center mb-3">
+                <h5 id="sampling-status" style="color: #00B8A9;">Analyzing...</h5>
+            </div>
+
+            <div class="mb-3">
+                <label for="resample-slider" class="form-label">
+                    <strong>Adjust Sample Rate:</strong> <span id="current-sr-display" style="color: #00B8A9;">16000 Hz</span>
+                </label>
+                   <input
+                        type="range"
+                        class="form-range"
+                        id="resample-slider"
+                        min="1000"
+                        max="48000"
+                        step="500"
+                        value="16000"
+                        style="background: linear-gradient(to right, #00B8A9 0%, #58a6ff 100%);"
+                   >
+                <div class="d-flex justify-content-between">
+                <small class="text-secondary">1 kHz (step: 500 Hz)</small>
+                <small class="text-secondary">48 kHz</small>
+                </div>
+            </div>
+
+            <div class="text-center mb-3">
+                <button id="play-resampled-btn" class="btn btn-info">Play Resampled Audio</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resampled Audio Player -->
+    <div id='audio-player-resampled' class="mt-4" style="display: none;">
+        <h5 style="color: #f78166;">Resampled Audio Player:</h5>
+    </div>
+
+    <!-- Resampled Audio Time Domain Graph -->
+    <div class="graph-container mt-4" id="resampled-graph-container" style="display: none;">
+        <div id='time-domain-graph-resampled' style='height: 350px;'></div>
+    </div>
+
+    <div id='audio-debug-info' class="mt-3 text-secondary" style="font-size: 0.8rem;"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/detect_logic.js' %}"></script>
+{% endblock %}

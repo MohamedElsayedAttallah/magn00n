@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="card p-4">
+    <h2 class="text-center mb-4" style="color: #F6416C;">SAR Level-1 GRD Viewer</h2>
+
+    <label for="sar-file-input" id="drop-zone-sar" class="dropzone mb-4" style="border-color: #F6416C; cursor: pointer;">
+        <p><strong>Click anywhere in this box to browse for your SAR .tiff or .tif file</strong> (Drag and Drop also works)</p>
+        <small class="text-secondary">Note: Only single `.tiff` file preview is supported.</small>
+    </label>
+
+    <input
+        type="file"
+        id="sar-file-input"
+        accept=".tiff,.tif"
+        style="display: none;"
+    >
+
+    <div id="sar-status" class="alert alert-info" role="alert">
+        Awaiting file upload...
+    </div>
+
+    <button
+        id='sar_load_button'
+        class="btn btn-lg w-100 mb-4"
+        style='background-color: #F6416C; border-color: #F6416C; color: white;'
+        disabled
+    >
+        Load and Process SAR Image
+    </button>
+
+
+    <div id='sar_output_image' class="mt-4 text-center">
+        <div id="sar-plot-container" style="min-height: 400px;">
+            </div>
+    </div>
+
+    <div id='sar_debug_info' class="mt-3 text-secondary" style="font-size: 0.8rem;"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/sar_logic.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="card p-4">
+    <h2 class="text-center mb-4" style="color: #00B8A9;">EEG Viewer (Electroencephalography)</h2>
+
+    <div id="drop-zone-eeg" class="dropzone mb-4">
+        <p><strong>Drag and Drop your EEG .set file here</strong> (MNE/EEGLAB format) <br>
+           <small class="text-secondary">File will be converted to JSON on the server for client-side streaming.</small></p>
+        <input type="file" id="eeg-file-input" accept=".set" multiple hidden>
+    </div>
+
+    <div id="eeg-status" class="alert alert-info" role="alert">
+        Awaiting file upload...
+    </div>
+
+    <div id="eeg-controls" class="row mb-4" style="display: none;">
+
+        <div class="col-md-3">
+            <label for="eeg-primary-ch" class="form-label">Primary Channels</label>
+            <select id="eeg-primary-ch" class="form-select" multiple size="3"></select>
+        </div>
+
+        <div class="col-md-3">
+            <label for="eeg-pair-ch" class="form-label">Pair Channel (for XOR/Rec.)</label>
+            <select id="eeg-pair-ch" class="form-select"></select>
+        </div>
+
+        <div class="col-md-3 d-flex align-items-end justify-content-between">
+            <button id="eeg-btn-play" class="btn btn-success flex-fill me-2" disabled>
+                <i class="fas fa-play"></i> ▶ Play
+            </button>
+            <button id="eeg-btn-pause" class="btn btn-warning flex-fill me-2" disabled>
+                <i class="fas fa-pause"></i> ⏸ Pause
+            </button>
+            <button id="eeg-btn-reset" class="btn btn-danger flex-fill" disabled>
+                Reset (New Fs)
+            </button>
+        </div>
+
+        <div class="col-md-3" id="eeg-time-slider-container">
+            <label for="eeg-time-slider" class="form-label">Window: <span id="window-size-output-eeg">5.0</span> sec</label>
+            <input type="range" class="form-range" min="1" max="10" step="0.5" value="5" id="eeg-time-slider">
+        </div>
+    </div>
+
+    <div id="eeg-nyquist-slider-container" class="mb-4" style="display: none;">
+        <label for="eeg-nyquist-slider" class="form-label">Simulated Sampling FS ($f_s$): <span id="nyquist-fs-output-eeg">500</span> Hz (Nyquist Limit: <span id="max-freq-output-eeg">250</span> Hz)</label>
+        <input type="range" class="form-range" min="0" max="500" step="10" value="500" id="eeg-nyquist-slider">
+    </div>
+
+    <hr style="border-color: #30363d;">
+
+    <div id="eeg-mode-buttons" class="text-center mb-4" style="display: none;">
+        <h4 class="mb-3" style="color: #c9d1d9;">Visualization Mode</h4>
+        <button class="btn btn-mode me-2 active" data-mode="linear">1. Linear Waveform</button>
+        <button class="btn btn-mode me-2" data-mode="xor">2. XOR Detection</button>
+        <button class="btn btn-mode me-2" data-mode="polar">3. Polar View</button>
+        <button class="btn btn-mode" data-mode="recurrence">4. Recurrence Map</button>
+    </div>
+
+
+    <div id="eeg-plots" style="min-height: 500px;">
+        <div class="graph-container">
+            <h5 class="text-light" id="current-plot-title-eeg">1. Linear Waveform (<span id="linear-time-window-eeg">0-5s</span>)</h5>
+            <div id="eeg-single-plot" style="height: 450px;"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Styling for the mode buttons */
+    .btn-mode {
+        background-color: #30363d;
+        color: #c9d1d9;
+        border: 1px solid #30363d;
+    }
+    .btn-mode:hover {
+        background-color: #50555c;
+        color: white;
+    }
+    .btn-mode.active {
+        background-color: #58a6ff;
+        border-color: #58a6ff;
+        color: white;
+        box-shadow: 0 0 8px rgba(88, 166, 255, 0.5);
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+<script src="{% static 'js/eeg_logic.js' %}"></script>
+{% endblock %}

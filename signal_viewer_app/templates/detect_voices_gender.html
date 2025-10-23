@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="card p-4">
+    <h2 class="text-center mb-4" style="color: #c4b5fd;">Voice Gender Detector</h2>
+
+    <div id="drop-zone-voices" class="dropzone mb-4">
+        <p><strong>Drag and Drop your audio file (.wav / .mp3) here</strong> (Click to Select)</p>
+        <small class="text-secondary">File will be analyzed for gender detection.</small>
+        <input type="file" id="voices-file-input" accept=".wav,.mp3" style="display: none;">
+    </div>
+
+    <div id="voices-status" class="alert alert-info" role="alert">
+        Awaiting audio file upload...
+    </div>
+
+    <div class="d-flex justify-content-center mb-4">
+        <button id='analyze-voices-button' class="btn btn-success me-3" disabled>Analyze Voice</button>
+        <button id='play-voices-button' class="btn btn-secondary" disabled>▶Play Original Audio</button>
+    </div>
+
+    <div id='audio-player-voices-original' class="mb-4">
+        <h5 style="color: #c4b5fd;">Original Audio Player:</h5>
+    </div>
+
+    <div class="graph-container">
+        <div id='time-domain-graph-voices-original' style='height: 350px;'></div>
+    </div>
+
+    <div id='voices-prediction-output' class="mt-4 text-center"></div>
+
+    <div class="graph-container mt-4">
+        <div id='voices-probabilities-graph' style='height: 300px;'></div>
+    </div>
+
+    <div id='nyquist-section-voices' class="mt-4" style="display: none;">
+        <div class="card p-3" style="background-color: #161b22; border: 1px solid #30363d;">
+            <h4 class="text-center mb-3" style="color: #c4b5fd;">Nyquist Frequency Analysis</h4>
+            <div class="row mb-3">
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Original Sample Rate</small>
+                        <h5 id="voices-original-sr" style="color: #58a6ff;">16000 Hz</h5>
+                    </div>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Current Sample Rate</small>
+                        <h5 id="voices-current-sr" style="color: #c4b5fd;">16000 Hz</h5>
+                    </div>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Original Max Frequency</small>
+                        <h5 id="voices-max-freq" style="color: #f78166;">0 Hz</h5>
+                    </div>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                        <small class="text-secondary">Nyquist Frequency</small>
+                        <h5 id="voices-nyquist-freq" style="color: #79c0ff;">0 Hz</h5>
+                        <small class="text-secondary" style="font-size: 0.75rem;">F(nyquist) = 2 × F(max)</small>
+                    </div>
+                </div>
+            </div>
+            <div class="text-center mb-3">
+                <h5 id="voices-sampling-status" style="color: #c4b5fd;">Analyzing...</h5>
+            </div>
+            <div class="mb-3">
+                <label for="voices-resample-slider" class="form-label">
+                    <strong>Adjust Sample Rate:</strong> <span id="voices-current-sr-display" style="color: #c4b5fd;">16000 Hz</span>
+                </label>
+                <input type="range" class="form-range" id="voices-resample-slider" min="1000" max="48000" step="500" value="16000">
+                <div class="d-flex justify-content-between">
+                    <small class="text-secondary">1 kHz (step: 500 Hz)</small>
+                    <small class="text-secondary">48 kHz</small>
+                </div>
+            </div>
+            <div class="text-center mb-3">
+                <button id="play-voices-resampled-btn" class="btn btn-info">Play Resampled Audio</button>
+            </div>
+        </div>
+    </div>
+
+    <div id='audio-player-voices-resampled' class="mt-4" style="display: none;">
+        <h5 style="color: #f78166;">Resampled Audio Player:</h5>
+    </div>
+
+    <div class="graph-container mt-4" id="voices-resampled-graph-container" style="display: none;">
+        <div id='time-domain-graph-voices-resampled' style='height: 350px;'></div>
+    </div>
+
+    <div id='voices-resampled-prediction' class="mt-4 text-center" style="display: none;">
+        <div class="card p-3" style="background-color: #161b22; border: 1px solid #30363d;">
+            <h5 style="color: #c4b5fd;">Resampled Audio Prediction:</h5>
+            <h4 id="voices-resampled-result" style="font-weight: bold;"></h4>
+            <small class="text-secondary">Prediction may change slightly based on sample rate</small>
+        </div>
+    </div>
+
+    <!-- ANTI-ALIASING SECTION - THIS MUST BE HERE -->
+    <div id='anti-aliasing-section' class="mt-5" style="display: none; background-color: #1a1f2e; padding: 30px; border-radius: 10px; border: 3px solid #c4b5fd;">
+        <h3 class="text-center mb-4" style="color: #c4b5fd; font-size: 2rem;">🎵 Anti-Aliasing Enhancement</h3>
+
+        <div class="text-center mb-4">
+            <button id='apply-anti-aliasing-btn' class="btn btn-primary btn-lg" style="font-size: 1.5rem; padding: 15px 40px;">
+                🔊 Apply Anti-Aliasing
+            </button>
+        </div>
+
+        <div id='anti-aliasing-status' class="alert alert-info mt-3" role="alert" style="display: none;">
+            Processing...
+        </div>
+
+        <div id='enhanced-audio-player' class="mt-4" style="display: none;">
+            <h5 style="color: #79c0ff;">Enhanced Audio Player (After Anti-Aliasing):</h5>
+        </div>
+
+        <div class="graph-container mt-4" id="enhanced-audio-graph-container" style="display: none;">
+            <div id='time-domain-graph-enhanced' style='height: 350px;'></div>
+        </div>
+
+        <div class="graph-container mt-4" id="enhanced-frequency-graph-container" style="display: none;">
+            <div id='frequency-domain-graph-enhanced' style='height: 350px;'></div>
+        </div>
+
+        <div id='enhanced-audio-stats' class="mt-4" style="display: none;">
+            <div class="card p-3" style="background-color: #0d1117; border: 1px solid #30363d;">
+                <h5 class="text-center mb-3" style="color: #79c0ff;">Enhanced Audio Statistics</h5>
+                <div class="row">
+                    <div class="col-md-4 text-center">
+                        <small class="text-secondary">Duration</small>
+                        <h6 id="enhanced-duration" style="color: #c9d1d9;">0.00s</h6>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <small class="text-secondary">Sample Rate</small>
+                        <h6 id="enhanced-sr" style="color: #c9d1d9;">16000 Hz</h6>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <small class="text-secondary">Max Frequency</small>
+                        <h6 id="enhanced-max-freq" style="color: #c9d1d9;">0 Hz</h6>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id='voices-debug-info' class="mt-3 text-secondary" style="font-size: 0.8rem;"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/detect_voices_gender_logic.js' %}"></script>
+{% endblock %}

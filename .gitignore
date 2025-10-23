@@ -1,0 +1,3 @@
+.venv
+*.pth
+signal_viewer_app/assets/

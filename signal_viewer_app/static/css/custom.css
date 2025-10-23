@@ -1,0 +1,261 @@
+/* signal_viewer_app/static/css/custom.css */
+
+/* -------------------------------------------------------------------
+ * Global Styles & Theme Configuration
+ * Based on a professional, dark (GitHub-like) theme for high contrast
+ * ------------------------------------------------------------------- */
+
+:root {
+    /* Main Theme Colors */
+    --color-bg-dark: #0d1117;           /* Main background */
+    --color-card-dark: #161b22;         /* Card background */
+    --color-border-dark: #30363d;       /* Borders and separators */
+    --color-text-light: #c9d1d9;        /* Default text */
+    --color-text-secondary: #8b949e;    /* Secondary/Muted text */
+    --color-highlight: #58a6ff;         /* Primary highlight/link (Blue) */
+
+    /* Module Specific Accents */
+    --accent-ecg: #58a6ff;              /* Blue */
+    --accent-eeg: #00B8A9;              /* Teal */
+    --accent-sar: #F6416C;              /* Pink/Red */
+    --accent-detect: #FFA500;           /* Orange */
+    --accent-doppler: #c4b5fd;          /* Soft Purple */
+}
+
+body {
+    background-color: var(--color-bg-dark);
+    color: var(--color-text-light);
+    font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Ensure plot containers inherit colors */
+.graph-container {
+    background-color: var(--color-card-dark);
+    border: 1px solid var(--color-border-dark);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    transition: box-shadow 0.3s ease;
+}
+
+/* -------------------------------------------------------------------
+ * Navigation and Layout Components (Override Bootstrap)
+ * ------------------------------------------------------------------- */
+
+.navbar {
+    background-color: var(--color-card-dark) !important;
+    border-bottom: 2px solid var(--color-border-dark);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.navbar-brand {
+    color: var(--color-highlight) !important;
+    font-weight: bold;
+}
+
+.nav-link {
+    color: var(--color-text-light) !important;
+    border-radius: 8px;
+    transition: background-color 0.3s, color 0.3s;
+    padding: 8px 15px !important;
+    font-weight: 500;
+}
+
+.nav-link:hover, .nav-item.active .nav-link {
+    background-color: var(--color-border-dark);
+    color: var(--color-highlight) !important;
+}
+
+/* -------------------------------------------------------------------
+ * Cards, Forms, and Drop Zones
+ * ------------------------------------------------------------------- */
+
+.card {
+    background-color: var(--color-card-dark);
+    border: 1px solid var(--color-border-dark);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    border-radius: 12px;
+}
+
+/* Styling for the main file upload areas */
+.dropzone {
+    border: 3px dashed var(--color-border-dark);
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.3s, background-color 0.3s;
+    border-radius: 10px;
+}
+
+.dropzone:hover {
+    border-color: var(--color-highlight);
+    background-color: #1f2a37; /* Slightly lighter hover */
+}
+
+/* Form controls (input, select, etc.) */
+.form-control, .form-select {
+    background-color: var(--color-bg-dark);
+    border: 1px solid var(--color-border-dark);
+    color: var(--color-text-light);
+    transition: border-color 0.2s;
+}
+
+.form-control:focus, .form-select:focus {
+    background-color: var(--color-bg-dark);
+    border-color: var(--color-highlight);
+    color: var(--color-text-light);
+    box-shadow: 0 0 0 0.25rem rgba(88, 166, 255, 0.25);
+}
+
+/* Input group styling for a clean look */
+.input-group-text {
+    background-color: var(--color-border-dark);
+    border: 1px solid var(--color-border-dark);
+    color: var(--color-text-light);
+    font-weight: 500;
+}
+
+/* -------------------------------------------------------------------
+ * Buttons and Alerts
+ * ------------------------------------------------------------------- */
+
+.btn-primary {
+    background-color: var(--accent-ecg);
+    border-color: var(--accent-ecg);
+}
+
+.btn-success {
+    background-color: var(--accent-eeg);
+    border-color: var(--accent-eeg);
+}
+
+.btn-warning {
+    background-color: var(--accent-detect);
+    border-color: var(--accent-detect);
+}
+
+.btn:hover {
+    filter: brightness(1.2);
+    transform: translateY(-1px);
+    transition: all 0.2s ease;
+}
+
+.alert {
+    border: 1px solid transparent;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.alert-info {
+    background-color: #1a3047;
+    border-color: #2f5478;
+    color: #8ab4f8;
+}
+
+.alert-success {
+    background-color: #1c3623;
+    border-color: #2e6f43;
+    color: #4cd964;
+}
+
+.alert-danger {
+    background-color: #3b2123;
+    border-color: #7b2931;
+    color: #f88379;
+}
+
+.alert-warning {
+    background-color: #383013;
+    border-color: #77612c;
+    color: #ffc107;
+}
+
+/* -------------------------------------------------------------------
+ * Utility/Custom Elements
+ * ------------------------------------------------------------------- */
+
+/* Custom hover effect for home cards */
+.card-hover:hover {
+    transform: translateY(-5px);
+    transition: transform 0.3s ease-in-out, box-shadow 0.3s ease;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6) !important;
+}
+
+.text-secondary, .text-muted {
+    color: var(--color-text-secondary) !important;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: var(--color-text-light);
+}
+
+/* Force anti-aliasing section to be visible when shown */
+#anti-aliasing-section {
+    z-index: 100 !important;
+    position: relative !important;
+}
+
+#anti-aliasing-section[style*="display: block"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+/* Speed Prediction Styling */
+#speed-prediction-result {
+    animation: slideIn 0.5s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#predicted-speed-value {
+    text-shadow: 0 0 20px rgba(88, 166, 255, 0.5);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+/* Force anti-aliasing section visibility for cars page */
+#anti-aliasing-section-cars {
+    z-index: 100 !important;
+    position: relative !important;
+}
+
+#anti-aliasing-section-cars[style*="display: block"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+/* Predict Speed Button Styling */
+#predict-speed-button {
+    background: linear-gradient(135deg, #FFA500 0%, #FF8C00 100%);
+    border: none;
+    box-shadow: 0 4px 15px rgba(255, 165, 0, 0.3);
+    transition: all 0.3s ease;
+}
+
+#predict-speed-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(255, 165, 0, 0.4);
+}
+
+#predict-speed-button:disabled {
+    background: #555;
+    box-shadow: none;
+}

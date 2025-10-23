@@ -1,0 +1,105 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal Viewer - DSP Course</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/custom.css' %}">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        /* Custom styles for a dark, professional theme */
+        body {
+            background-color: #0d1117; /* GitHub Dark Background */
+            color: #c9d1d9;
+            font-family: 'Inter', sans-serif;
+        }
+        .navbar {
+            background-color: #161b22 !important; /* Slightly darker header */
+            border-bottom: 2px solid #30363d;
+        }
+        .nav-link {
+            color: #c9d1d9 !important;
+            border-radius: 8px;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .nav-link:hover, .nav-item.active .nav-link {
+            background-color: #30363d;
+            color: #58a6ff !important;
+        }
+        .card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        .dropzone {
+            border: 2px dashed #30363d;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.3s, background-color 0.3s;
+            border-radius: 10px;
+        }
+        .dropzone:hover {
+            border-color: #58a6ff;
+            background-color: #1f2a37;
+        }
+        /* Style the Plotly graph containers */
+        .graph-container {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+          <!-- Replace the navbar section in base.html with this -->
+        <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
+            <div class="container-fluid">
+                <a class="navbar-brand me-5" href="{% url 'index' %}" style="color: #58a6ff; font-weight: bold;">
+                    🔬 Signal Viewer
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav">
+                        <li class="nav-item {% if request.path == '/ecg/' %}active{% endif %}">
+                            <a class="nav-link" href="{% url 'ecg' %}">ECG</a>
+                        </li>
+                        <li class="nav-item {% if request.path == '/eeg/' %}active{% endif %}">
+                            <a class="nav-link" href="{% url 'eeg' %}">EEG</a>
+                        </li>
+                        <li class="nav-item {% if request.path == '/sar/' %}active{% endif %}">
+                            <a class="nav-link" href="{% url 'sar' %}">SAR</a>
+                        </li>
+                        <li class="nav-item {% if request.path == '/detect/' %}active{% endif %}">
+                            <a class="nav-link" href="{% url 'detect' %}">Detect (Drone/Bird)</a>
+                        </li>
+                        <li class="nav-item {% if request.path == '/detect-cars/' %}active{% endif %}">
+                            <a class="nav-link" href="{% url 'detect_cars' %}">Detect Cars</a>
+                        </li>
+                        <li class="nav-item {% if request.path == '/detect-voices/' %}active{% endif %}">
+                            <a class="nav-link" href="{% url 'detect_voices' %}">Detect Voices</a>
+                        </li>
+                        <li class="nav-item {% if request.path == '/doppler/' %}active{% endif %}">
+                            <a class="nav-link" href="{% url 'doppler' %}">Doppler Generator</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+    <div class="container my-5">
+        {% block content %}
+        {% endblock %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    {% block extra_js %}{% endblock %}
+
+</body>
+</html>

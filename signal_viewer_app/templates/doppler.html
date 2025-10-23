@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="card p-4">
+    <h2 class="text-center mb-4" style="color: #c4b5fd;">Doppler Effect Audio Generator</h2>
+    <p class="text-center text-secondary">Input parameters to generate a sine wave tone with the passing Doppler effect applied.</p>
+
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="input-group mb-3">
+                <span class="input-group-text">Output File Name (.wav)</span>
+                <input id="doppler-file-name" type="text" class="form-control" placeholder="e.g., car_horn.wav" value="doppler_tone.wav">
+            </div>
+
+            <div class="input-group mb-3">
+                <span class="input-group-text">Velocity (km/h)</span>
+                <input id="doppler-velocity" type="number" class="form-control" placeholder="e.g., 80" min="1" value="80">
+            </div>
+
+            <div class="input-group mb-4">
+                <span class="input-group-text">Frequency (Hz)</span>
+                <input id="doppler-frequency" type="number" class="form-control" placeholder="e.g., 440" min="1" value="440">
+            </div>
+
+            <button id="doppler-btn" class="btn btn-primary w-100" style="background-color: #58a6ff; border-color: #58a6ff;">
+                <i class="fas fa-play"></i> Generate Doppler Audio
+            </button>
+        </div>
+    </div>
+
+    <!-- Status Display - Now visible from start -->
+    <div id="doppler-status" class="mt-4 text-center alert alert-info" role="alert">
+        Enter parameters and click 'Generate Doppler Audio' to start.
+    </div>
+
+    <div class="row justify-content-center mt-5">
+        <div class="col-md-10">
+            <!-- Original Audio Player -->
+            <div id='doppler-audio-player-original' class="mb-4">
+                <h5 style="color: #c4b5fd;">Original Audio Player:</h5>
+            </div>
+
+            <!-- Original Audio Time Domain Graph -->
+            <h4 class="text-light mb-3">Signal Visualization</h4>
+            <div class="graph-container">
+                <div id='doppler-time-domain-graph-original' style='height: 350px;'></div>
+            </div>
+
+            <!-- Nyquist Frequency Analysis Section -->
+            <div id='doppler-nyquist-section' class="mt-4" style="display: none;">
+                <div class="card p-3" style="background-color: #161b22; border: 1px solid #30363d;">
+                    <h4 class="text-center mb-3" style="color: #c4b5fd;">Nyquist Frequency Analysis</h4>
+
+                    <div class="row mb-3">
+                        <div class="col-md-3 text-center">
+                            <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                                <small class="text-secondary">Original Sample Rate</small>
+                                <h5 id="doppler-original-sr" style="color: #58a6ff;">44100 Hz</h5>
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-center">
+                            <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                                <small class="text-secondary">Current Sample Rate</small>
+                                <h5 id="doppler-current-sr" style="color: #c4b5fd;">44100 Hz</h5>
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-center">
+                            <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                                <small class="text-secondary">Original Max Frequency</small>
+                                <h5 id="doppler-max-freq" style="color: #f78166;">0 Hz</h5>
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-center">
+                            <div class="p-2" style="border: 1px solid #30363d; border-radius: 5px;">
+                                <small class="text-secondary">Nyquist Frequency</small>
+                                <h5 id="doppler-nyquist-freq" style="color: #79c0ff;">0 Hz</h5>
+                                <small class="text-secondary" style="font-size: 0.75rem;">F(nyquist) = 2 × F(max)</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-center mb-3">
+                        <h5 id="doppler-sampling-status" style="color: #c4b5fd;">Analyzing...</h5>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="doppler-resample-slider" class="form-label">
+                            <strong>Adjust Sample Rate:</strong> <span id="doppler-current-sr-display" style="color: #c4b5fd;">44100 Hz</span>
+                        </label>
+                        <input
+                            type="range"
+                            class="form-range"
+                            id="doppler-resample-slider"
+                            min="100"
+                            max="48000"
+                            step="100"
+                            value="44100"
+                            style="background: linear-gradient(to right, #c4b5fd 0%, #58a6ff 100%);"
+                        >
+                        <div class="d-flex justify-content-between">
+                            <small class="text-secondary">100 Hz (step: 100 Hz)</small>
+                            <small class="text-secondary">48 kHz</small>
+                        </div>
+                    </div>
+
+                    <div class="text-center mb-3">
+                        <button id="doppler-play-resampled-btn" class="btn btn-info">🔊 Play Resampled Audio</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Resampled Audio Player -->
+            <div id='doppler-audio-player-resampled' class="mt-4" style="display: none;">
+                <h5 style="color: #f78166;">Resampled Audio Player:</h5>
+            </div>
+
+            <!-- Resampled Audio Time Domain Graph -->
+            <div class="graph-container mt-4" id="doppler-resampled-graph-container" style="display: none;">
+                <div id='doppler-time-domain-graph-resampled' style='height: 350px;'></div>
+            </div>
+
+            <div id='doppler-debug-info' class="mt-3 text-secondary" style="font-size: 0.8rem;"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/doppler_logic.js' %}"></script>
+{% endblock %}

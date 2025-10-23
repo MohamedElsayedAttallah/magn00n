@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="card p-5 text-center">
+    <h1 class="display-3" style="color: #58a6ff; font-weight: 700;">
+         Signal Viewer Dashboard
+    </h1>
+    <p class="lead text-secondary mt-3 mb-5">
+        Welcome to the Digital Signal Processing (DSP) Course Visualization Platform. Explore real-time and analyzed biomedical, radar, and acoustic signals.
+    </p>
+
+    <div class="row justify-content-center g-4">
+
+        <div class="col-md-4 col-lg-3">
+            <a href="{% url 'ecg' %}" class="card-link text-decoration-none">
+                <div class="card card-hover h-100 p-3 shadow-lg" style="border-left: 5px solid #58a6ff;">
+                    <div class="card-body">
+                        <h5 class="card-title" style="color: #58a6ff;">ECG Viewer</h5>
+                        <p class="card-text text-muted">Electrocardiography analysis with Recurrence & XOR.</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <a href="{% url 'eeg' %}" class="card-link text-decoration-none">
+                <div class="card card-hover h-100 p-3 shadow-lg" style="border-left: 5px solid #00B8A9;">
+                    <div class="card-body">
+                        <h5 class="card-title" style="color: #00B8A9;">EEG Viewer</h5>
+                        <p class="card-text text-muted">Electroencephalography data streaming and detection.</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <a href="{% url 'sar' %}" class="card-link text-decoration-none">
+                <div class="card card-hover h-100 p-3 shadow-lg" style="border-left: 5px solid #F6416C;">
+                    <div class="card-body">
+                        <h5 class="card-title" style="color: #F6416C;">SAR Viewer</h5>
+                        <p class="card-text text-muted">Synthetic Aperture Radar image processing (Level-1 GRD).</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <a href="{% url 'detect' %}" class="card-link text-decoration-none">
+                <div class="card card-hover h-100 p-3 shadow-lg" style="border-left: 5px solid #E1E9C9;">
+                    <div class="card-body">
+                        <h5 class="card-title" style="color: #E1E9C9;">Detect (Drone/Bird)</h5>
+                        <p class="card-text text-muted">Drone/Bird audio classification using ML models.</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <a href="{% url 'detect_cars' %}" class="card-link text-decoration-none">
+                <div class="card card-hover h-100 p-3 shadow-lg" style="border-left: 5px solid #FFA500;">
+                    <div class="card-body">
+                        <h5 class="card-title" style="color: #FFA500;">Detect (Cars)</h5>
+                        <p class="card-text text-muted">Car sound analysis to estimate velocity and frequency, with real-time waveform visualization and aliasing resampling control.
+</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <a href="{% url 'detect_voices' %}" class="card-link text-decoration-none">
+                <div class="card card-hover h-100 p-3 shadow-lg" style="border-left: 5px solid #BBDCE5;">
+                    <div class="card-body">
+                        <h5 class="card-title" style="color: #BBDCE5;">Detect (Voices)</h5>
+                        <p class="card-text text-muted">Voice signal classification to identify gender (male/female), with waveform visualization and aliasing–antialiasing resampling features.</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <a href="{% url 'doppler' %}" class="card-link text-decoration-none">
+                <div class="card card-hover h-100 p-3 shadow-lg" style="border-left: 5px solid #c4b5fd;">
+                    <div class="card-body">
+                        <h5 class="card-title" style="color: #c4b5fd;">Doppler Generator</h5>
+                        <p class="card-text text-muted">Acoustic signal synthesis with the Doppler effect.</p>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+    </div>
+</div>
+
+<style>
+    /* Card Hover Style (Repeated from custom.css for immediate effect) */
+    .card-hover:hover {
+        transform: translateY(-5px);
+        transition: transform 0.3s ease-in-out;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6) !important;
+    }
+    .card-link {
+        color: inherit;
+        text-decoration: none;
+    }
+</style>
+{% endblock %}
