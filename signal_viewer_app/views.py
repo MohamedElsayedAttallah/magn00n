@@ -21,35 +21,28 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow import keras
 from .anti_aliasing_utils import AudioAntiAliaser, audio_array_to_wav_bytes
-try:
-    import librosa
-    import soundfile as sf
-    import tensorflow as tf
-    from .yamnet_utils import initialize_yamnet, YAMNetEmbeddingLayer, extract_yamnet_embeddings
-    from inaSpeechSegmenter import Segmenter
-
-    ML_AVAILABLE = True
-    print("✅ All ML libraries loaded successfully (librosa, tensorflow, soundfile, inaSpeechSegmenter)")
-except ImportError as e:
-    print(f"⚠️ Warning: Audio/ML dependencies missing: {e}")
-    ML_AVAILABLE = False
+import librosa
+import soundfile as sf
+import tensorflow as tf
+from .yamnet_utils import initialize_yamnet, YAMNetEmbeddingLayer, extract_yamnet_embeddings
+from inaSpeechSegmenter import Segmenter
 
 
-    def initialize_yamnet():
-        raise NotImplementedError("ML dependencies missing.")
+def initialize_yamnet():
+    raise NotImplementedError("ML dependencies missing.")
 
 
-    class YAMNetEmbeddingLayer:
-        pass
+class YAMNetEmbeddingLayer:
+    pass
 
 
-    def extract_yamnet_embeddings(*args, **kwargs):
-        raise NotImplementedError("ML dependencies missing.")
+def extract_yamnet_embeddings(*args, **kwargs):
+    raise NotImplementedError("ML dependencies missing.")
 
 
-    class Segmenter:
-        def __init__(self, *args, **kwargs):
-            raise NotImplementedError("inaSpeechSegmenter not installed.")
+class Segmenter:
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError("inaSpeechSegmenter not installed.")
 
 # --- Configuration Constants ---
 TARGET_SAMPLE_RATE = 1000
@@ -572,10 +565,6 @@ def analyze_audio_detect_bird_and_drone(request):
     except Exception as e:
         return JsonResponse({"error": f"Failed to decode audio data: {str(e)}"}, status=400)
 
-    if not ML_AVAILABLE:
-        return JsonResponse({
-            "error": "ML dependencies not available. Please install librosa and tensorflow."
-        }, status=500)
 
     temp_audio_path = None
     try:
@@ -1059,11 +1048,6 @@ def analyze_cars_audio(request):
         decoded_bytes = base64.b64decode(encoded)
     except Exception as e:
         return JsonResponse({"error": f"Failed to decode audio: {str(e)}"}, status=400)
-
-    if not ML_AVAILABLE:
-        return JsonResponse({
-            "error": "ML dependencies not available. Please install librosa."
-        }, status=500)
 
     temp_audio_path = None
     try:
