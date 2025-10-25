@@ -1,3 +1,5 @@
 .venv
 *.pth
 signal_viewer_app/assets/
+signal_viewer_app/__pycache__
+signal_viewer_project/__pycache__
