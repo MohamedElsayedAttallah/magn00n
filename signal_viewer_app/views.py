@@ -1,78 +1,339 @@
 # signal_viewer_app/views.py
-# FIXED VERSION - Resolves model loading and gender detection issues
-import torch
+"""
+Django views for signal processing and analysis.
+Handles ECG, EEG, SAR, audio analysis, and ML-based predictions.
+"""
+
+import base64
+import io
 import json
 import os
 import tempfile
-import numpy as np
-import base64
 import traceback
-import wfdb
 import wave
-import io
-
-# --- External Libraries ---
-from scipy.signal import resample_poly
 from pathlib import Path
-from django.shortcuts import render
+from typing import Dict, Any, Tuple, Optional, Union
+
+import numpy as np
+import torch
+import wfdb
 from django.http import JsonResponse, HttpResponseBadRequest
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from PIL import Image
-import tensorflow as tf
-from tensorflow import keras
+from scipy.signal import resample_poly
+
+# Import utility modules
 from .anti_aliasing_utils import AudioAntiAliaser, audio_array_to_wav_bytes
-import librosa
-import soundfile as sf
-import tensorflow as tf
-from .yamnet_utils import initialize_yamnet, YAMNetEmbeddingLayer, extract_yamnet_embeddings
-from inaSpeechSegmenter import Segmenter
 
+# Conditional ML library imports
+try:
+    import librosa
+    import soundfile as sf
+    import tensorflow as tf
+    from inaSpeechSegmenter import Segmenter
+    from .yamnet_utils import (
+        initialize_yamnet, 
+        YAMNetEmbeddingLayer, 
+        extract_yamnet_embeddings,
+        load_finetuned_model,
+        predict_audio_class
+    )
+    ML_AVAILABLE = True
+    print("✅ All ML libraries loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: Audio/ML dependencies missing: {e}")
+    ML_AVAILABLE = False
+    
+    # Define stub functions for missing dependencies
+    def initialize_yamnet():
+        raise NotImplementedError("ML dependencies missing.")
+    
+    class YAMNetEmbeddingLayer:
+        pass
+    
+    def extract_yamnet_embeddings(*args, **kwargs):
+        raise NotImplementedError("ML dependencies missing.")
+    
+    class Segmenter:
+        def __init__(self, *args, **kwargs):
+            raise NotImplementedError("inaSpeechSegmenter not installed.")
 
-def initialize_yamnet():
-    raise NotImplementedError("ML dependencies missing.")
-
-
-class YAMNetEmbeddingLayer:
-    pass
-
-
-def extract_yamnet_embeddings(*args, **kwargs):
-    raise NotImplementedError("ML dependencies missing.")
-
-
-class Segmenter:
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError("inaSpeechSegmenter not installed.")
-
-# --- Configuration Constants ---
+# =============================================================================
+# CONFIGURATION CONSTANTS
+# =============================================================================
 TARGET_SAMPLE_RATE = 1000
 TARGET_SAMPLE_RATE_AUDIO = 16000
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'assets', 'drone_bird_detection', 'yamnet_finetuned.h5')
+MAX_AUDIO_DURATION_SECONDS = 30
+MAX_FILE_SIZE_MB = 10
+
+# Model paths
+BASE_DIR = os.path.dirname(__file__)
+MODEL_PATH = os.path.join(BASE_DIR, 'assets', 'drone_bird_detection', 'yamnet_finetuned.h5')
+ANTI_ALIASING_MODEL_PATH = os.path.join(BASE_DIR, 'assets', 'anti_aliasing', 'best_modell.pth')
+
+# Classification class names
 CLASS_NAMES = ['Drone', 'Bird', 'Noise/Other']
 
-# Add this constant with other configuration constants
-ANTI_ALIASING_MODEL_PATH = os.path.join(
-    os.path.dirname(__file__),
-    'assets',
-    'anti_aliasing',
-    'best_modell.pth'
-)
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def validate_post_request(request) -> Optional[JsonResponse]:
+    """Validate that request method is POST."""
+    if request.method != 'POST':
+        return HttpResponseBadRequest("Invalid request method.")
+    return None
+
+
+def parse_audio_request(request) -> Tuple[Optional[str], Optional[str], int, Optional[JsonResponse]]:
+    """
+    Parse audio data from request body.
+    
+    Returns:
+        Tuple of (audio_data_uri, filename, target_sr, error_response)
+        If error_response is not None, should return it immediately.
+    """
+    try:
+        body_data = json.loads(request.body)
+        audio_data_uri = body_data.get('audio_data')
+        filename = body_data.get('filename', 'audio_file.wav')
+        target_sr = body_data.get('target_sample_rate', TARGET_SAMPLE_RATE_AUDIO)
+        
+        if not audio_data_uri:
+            return None, None, 0, JsonResponse({"error": "No audio data received."}, status=400)
+        
+        return audio_data_uri, filename, target_sr, None
+        
+    except json.JSONDecodeError as e:
+        return None, None, 0, JsonResponse(
+            {"error": f"Invalid JSON in request body: {str(e)}"}, status=400
+        )
+
+
+def decode_audio_data(audio_data_uri: str) -> Tuple[Optional[bytes], Optional[JsonResponse]]:
+    """
+    Decode base64 audio data URI.
+    
+    Returns:
+        Tuple of (decoded_bytes, error_response)
+        If error_response is not None, should return it immediately.
+    """
+    try:
+        if ',' in audio_data_uri:
+            _, encoded = audio_data_uri.split(',', 1)
+        else:
+            encoded = audio_data_uri
+        return base64.b64decode(encoded), None
+    except Exception as e:
+        return None, JsonResponse({"error": f"Failed to decode audio data: {str(e)}"}, status=400)
+
+
+def save_temp_audio_file(decoded_bytes: bytes, filename: str) -> str:
+    """Save decoded audio bytes to temporary file."""
+    ext = os.path.splitext(filename)[1] or '.wav'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
+        tmp_file.write(decoded_bytes)
+        return tmp_file.name
+
+
+def load_and_resample_audio(file_path: str, target_sr: int = TARGET_SAMPLE_RATE_AUDIO,
+                            max_duration: int = MAX_AUDIO_DURATION_SECONDS,
+                            return_original: bool = False) -> Union[Tuple[np.ndarray, int, int], Tuple[np.ndarray, int, int, np.ndarray]]:
+    """
+    Load and resample audio file.
+    
+    Args:
+        file_path: Path to audio file
+        target_sr: Target sample rate for resampling
+        max_duration: Maximum duration in seconds
+        return_original: If True, also return the original (pre-resample) audio
+    
+    Returns:
+        Tuple of (audio_array, sample_rate, original_sample_rate) or
+        (audio_array, sample_rate, original_sample_rate, original_audio) if return_original=True
+    """
+    if not ML_AVAILABLE:
+        raise RuntimeError("librosa is required but not available")
+    
+    # Try multiple methods to load audio (fallback for Windows without FFmpeg)
+    audio_original = None
+    sr_original = None
+    librosa_error = None
+    
+    try:
+        # Method 1: Try librosa (requires FFmpeg on Windows for MP3)
+        audio_original, sr_original = librosa.load(file_path, sr=None, mono=True)
+        print(f"[AUDIO] ✅ Loaded with librosa: {sr_original} Hz")
+    except Exception as e:
+        librosa_error = str(e)
+        error_lower = librosa_error.lower()
+        
+        # Check for specific compatibility issues
+        if 'numba' in error_lower or 'llvmlite' in error_lower:
+            print(f"[AUDIO] ⚠️ NumPy/Numba compatibility issue detected")
+        elif 'numpy' in error_lower and 'dtype' in error_lower:
+            print(f"[AUDIO] ⚠️ NumPy version incompatibility detected")
+        elif 'torch' in error_lower or 'pytorch' in error_lower:
+            print(f"[AUDIO] ⚠️ PyTorch compatibility issue detected")
+        
+        print(f"[AUDIO] librosa.load failed: {librosa_error[:200]}")
+        
+        try:
+            # Method 2: Try soundfile directly (works for WAV without FFmpeg)
+            import soundfile as sf
+            audio_original, sr_original = sf.read(file_path, dtype='float32')
+            # Convert stereo to mono if needed
+            if len(audio_original.shape) > 1:
+                audio_original = np.mean(audio_original, axis=1)
+            print(f"[AUDIO] ✅ Loaded with soundfile: {sr_original} Hz")
+        except Exception as sf_error:
+            print(f"[AUDIO] soundfile failed: {str(sf_error)[:200]}")
+            
+            try:
+                # Method 3: Try pydub for MP3 (doesn't require FFmpeg if using simpleaudio)
+                from pydub import AudioSegment
+                print(f"[AUDIO] Trying pydub for MP3...")
+                
+                # Load with pydub
+                if file_path.lower().endswith('.mp3'):
+                    audio_seg = AudioSegment.from_mp3(file_path)
+                elif file_path.lower().endswith('.wav'):
+                    audio_seg = AudioSegment.from_wav(file_path)
+                else:
+                    audio_seg = AudioSegment.from_file(file_path)
+                
+                # Convert to mono
+                if audio_seg.channels > 1:
+                    audio_seg = audio_seg.set_channels(1)
+                
+                # Get sample rate
+                sr_original = audio_seg.frame_rate
+                
+                # Convert to numpy array (float32, normalized to [-1, 1])
+                samples = np.array(audio_seg.get_array_of_samples(), dtype=np.float32)
+                audio_original = samples / (2.0 ** (8 * audio_seg.sample_width - 1))
+                
+                print(f"[AUDIO] ✅ Loaded with pydub: {sr_original} Hz")
+            except Exception as pydub_error:
+                print(f"[AUDIO] pydub failed: {str(pydub_error)[:200]}")
+                
+                # Provide detailed error message based on what failed
+                error_msg = "Cannot load audio file. "
+                
+                if librosa_error:
+                    if 'numba' in librosa_error.lower() or 'llvmlite' in librosa_error.lower():
+                        error_msg += "NumPy/Numba compatibility issue. Try: pip install numba --upgrade. "
+                    elif 'numpy' in librosa_error.lower():
+                        error_msg += "NumPy version incompatibility. Try: pip install 'numpy<2.0'. "
+                    elif 'torch' in librosa_error.lower():
+                        error_msg += "PyTorch compatibility issue. Try: pip install torch --upgrade. "
+                
+                error_msg += f"\nTried librosa, soundfile, and pydub. "
+                error_msg += f"\nSolutions: 1) Install FFmpeg, 2) Update packages: pip install librosa soundfile pydub --upgrade, "
+                error_msg += f"3) Downgrade NumPy: pip install 'numpy<2.0', 4) Convert to WAV format"
+                
+                raise RuntimeError(error_msg)
+    
+    # Truncate if too long
+    max_samples = max_duration * sr_original
+    if len(audio_original) > max_samples:
+        audio_original = audio_original[:max_samples]
+    
+    # Resample if needed
+    if sr_original != target_sr:
+        audio = librosa.resample(audio_original, orig_sr=sr_original, target_sr=target_sr)
+        sr = target_sr
+    else:
+        audio = audio_original.copy()
+        sr = sr_original
+    
+    # Normalize
+    max_val = np.max(np.abs(audio))
+    if max_val > 0:
+        audio = audio / max_val
+    
+    if return_original:
+        return audio, sr, sr_original, audio_original
+    return audio, sr, sr_original
+
+
+def compute_fft_analysis(audio: np.ndarray, sr: int, 
+                        downsample_factor: int = None) -> Dict[str, Any]:
+    """Compute FFT analysis and return visualization data."""
+    fft = np.fft.fft(audio)
+    fft_magnitude = np.abs(fft[:len(fft) // 2])
+    fft_frequencies = np.fft.fftfreq(len(audio), 1 / sr)[:len(fft) // 2]
+    
+    # Find maximum significant frequency
+    threshold = np.max(fft_magnitude) * 0.01
+    significant_freqs = fft_frequencies[fft_magnitude > threshold]
+    max_frequency = np.max(significant_freqs) if len(significant_freqs) > 0 else 0
+    
+    # Downsample for plotting
+    if downsample_factor is None:
+        downsample_factor = max(1, len(fft_frequencies) // 1000)
+    freqs_plot = fft_frequencies[::downsample_factor].tolist()
+    mags_plot = fft_magnitude[::downsample_factor].tolist()
+
+    # Provide both canonical and caller-specific keys for backward compatibility
+    return {
+        # canonical keys used by frontend (detect_cars logic)
+        'fft_frequencies': freqs_plot,
+        'fft_magnitudes': mags_plot,
+        # alternate names used by some refactored views
+        'fft_frequencies_plot': freqs_plot,
+        'fft_magnitude_plot': mags_plot,
+        'max_frequency': float(max_frequency),
+        'nyquist_frequency': float(sr / 2)
+    }
+
+
+def cleanup_temp_file(file_path: Optional[str]) -> None:
+    """Safely delete a temporary file."""
+    if file_path and os.path.exists(file_path):
+        try:
+            os.unlink(file_path)
+        except Exception as e:
+            print(f"[CLEANUP] Warning: {e}")
+
+
+def build_audio_response(audio: np.ndarray, sr: int, sr_original: int, 
+                        filename: str, additional_data: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Build standard audio analysis response with FFT data."""
+    fft_data = compute_fft_analysis(audio, sr)
+    
+    response = {
+        'waveform': audio.tolist(),
+        'sr': sr,
+        'original_sr': sr_original,
+        'filename': filename,
+        **fft_data
+    }
+    
+    if additional_data:
+        response.update(additional_data)
+    
+    return response
+
 
 # *********************************************************************************
 # * SARImageProcessor Class Definition (File Handling Logic) *
 # *********************************************************************************
 class SARImageProcessor:
-    """Processes SAR/TIFF images with downsampling and contrast enhancement."""
+    """Process SAR/TIFF images with downsampling and contrast enhancement."""
 
-    def __init__(self, max_dimension=4000, remove_pixel_limit=True):
+    def __init__(self, max_dimension: int = 4000, remove_pixel_limit: bool = True):
         self.max_dimension = max_dimension
         if remove_pixel_limit:
             Image.MAX_IMAGE_PIXELS = None
 
-    def load_tiff(self, file_path):
+    def load_tiff(self, file_path: str) -> Image.Image:
+        """Load TIFF image from file path."""
         return Image.open(file_path)
 
-    def get_metadata(self, img):
+    def get_metadata(self, img: Image.Image) -> Dict[str, Any]:
+        """Extract metadata from image."""
         width, height = img.size
         return {
             'width': width,
@@ -82,20 +343,28 @@ class SARImageProcessor:
             'bands': len(img.getbands()) if hasattr(img, 'getbands') else 1
         }
 
-    def downsample_if_needed(self, img):
+    def downsample_if_needed(self, img: Image.Image) -> Tuple[Image.Image, float]:
+        """Downsample image if it exceeds maximum dimensions."""
         width, height = img.size
+        
         if width <= self.max_dimension and height <= self.max_dimension:
             return img, 1.0
+        
         downsample_factor = max(width / self.max_dimension, height / self.max_dimension)
         new_width = int(width / downsample_factor)
         new_height = int(height / downsample_factor)
+        
         downsampled = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         return downsampled, downsample_factor
 
-    def to_numpy(self, img):
+    @staticmethod
+    def to_numpy(img: Image.Image) -> np.ndarray:
+        """Convert PIL image to numpy array."""
         return np.array(img)
 
-    def extract_grayscale_data(self, img_array):
+    @staticmethod
+    def extract_grayscale_data(img_array: np.ndarray) -> np.ndarray:
+        """Extract grayscale data from image array."""
         if len(img_array.shape) == 2:
             return img_array
         elif len(img_array.shape) == 3:
@@ -103,7 +372,9 @@ class SARImageProcessor:
         else:
             return img_array
 
-    def calculate_statistics(self, data):
+    @staticmethod
+    def calculate_statistics(data: np.ndarray) -> Dict[str, float]:
+        """Calculate statistical measures of the data."""
         return {
             'min': float(np.min(data)),
             'max': float(np.max(data)),
@@ -114,21 +385,31 @@ class SARImageProcessor:
             'p98': float(np.percentile(data, 98))
         }
 
-    def normalize_with_contrast_enhancement(self, data, clip_percentile=2):
+    @staticmethod
+    def normalize_with_contrast_enhancement(data: np.ndarray, 
+                                           clip_percentile: int = 2) -> np.ndarray:
+        """Normalize data with contrast enhancement using percentile clipping."""
         if np.max(data) - np.min(data) == 0:
             return np.zeros_like(data, dtype=np.uint8)
+        
         p_low = clip_percentile
         p_high = 100 - clip_percentile
         p_low_val, p_high_val = np.percentile(data, [p_low, p_high])
+        
         data_clipped = np.clip(data, p_low_val, p_high_val)
         normalized = ((data_clipped - p_low_val) / (p_high_val - p_low_val) * 255).astype(np.uint8)
+        
         return normalized
 
-    def apply_colormap(self, grayscale_array, colormap='viridis'):
+    @staticmethod
+    def apply_colormap(grayscale_array: np.ndarray, colormap: str = 'viridis') -> Image.Image:
+        """Apply colormap to grayscale image."""
         img = Image.fromarray(grayscale_array, mode='L')
         return img.convert('RGB')
 
-    def to_base64_png(self, img, optimize=True):
+    @staticmethod
+    def to_base64_png(img: Image.Image, optimize: bool = True) -> str:
+        """Convert image to base64-encoded PNG."""
         buffer = io.BytesIO()
         img.save(buffer, format='PNG', optimize=optimize)
         buffer.seek(0)
@@ -379,248 +660,47 @@ def process_sar_grd(request):
         )
 
     except Exception as e:
-        tb = traceback.format_exc()
-        print(f"SAR Critical Processing Error:\n{tb}")
+        print(f"SAR Critical Processing Error:\n{traceback.format_exc()}")
         return JsonResponse(
             {"error": f"CRITICAL SERVER ERROR: Processing failed. Details: {str(e)}"},
             status=500
         )
 
 
-# ========== FIXED: DRONE/BIRD DETECTION ==========
-# Replace the analyze_audio_detect_bird_and_drone function in views.py with this fixed version
-
-# FIXED VERSION - Proper Model Loading and Prediction
-# Replace the analyze_audio_detect_bird_and_drone function in views.py
-
-# Replace the analyze_audio_detect_bird_and_drone function in views.py with this:
-
-# Add this custom function before analyze_audio_detect_bird_and_drone
-def load_model_with_compatibility(model_path):
-    """
-    Load model with backward compatibility for batch_shape parameter.
-    Handles conversion from old Keras format to new format.
-    """
-    try:
-        # Try loading directly first
-        print(f"Attempting to load model from {model_path}...")
-
-        # Initialize YAMNet
-        initialize_yamnet()
-
-        custom_objects = {
-            'extract_yamnet_embeddings': extract_yamnet_embeddings,
-            'YAMNetEmbeddingLayer': YAMNetEmbeddingLayer,
-        }
-
-        # Method 1: Try loading with compile=False
-        try:
-            model = tf.keras.models.load_model(
-                model_path,
-                custom_objects=custom_objects,
-                compile=False
-            )
-            print("✅ Model loaded successfully (direct load)")
-            return model
-        except Exception as e1:
-            print(f"Direct load failed: {e1}")
-
-            # Method 2: Load and rebuild model architecture
-            try:
-                print("Attempting to rebuild model architecture...")
-
-                # Load the weights file
-                import h5py
-                with h5py.File(model_path, 'r') as f:
-                    # Get model config from HDF5
-                    if 'model_config' in f.attrs:
-                        import json
-                        model_config = json.loads(f.attrs['model_config'])
-
-                        # Fix batch_shape -> shape conversion
-                        def fix_config(config):
-                            if isinstance(config, dict):
-                                if 'config' in config and isinstance(config['config'], dict):
-                                    layer_config = config['config']
-                                    # Convert batch_shape to shape
-                                    if 'batch_shape' in layer_config:
-                                        batch_shape = layer_config.pop('batch_shape')
-                                        if batch_shape and len(batch_shape) > 1:
-                                            layer_config['shape'] = batch_shape[1:]
-                                        print(f"Fixed layer: {config.get('class_name', 'unknown')}")
-
-                                    # Recursively fix nested configs
-                                    for key, value in layer_config.items():
-                                        if isinstance(value, (dict, list)):
-                                            fix_config(value)
-
-                                # Handle layers list
-                                if 'layers' in config:
-                                    for layer in config['layers']:
-                                        fix_config(layer)
-
-                            elif isinstance(config, list):
-                                for item in config:
-                                    fix_config(item)
-
-                        fix_config(model_config)
-
-                        # Rebuild model from fixed config
-                        model = tf.keras.models.model_from_json(
-                            json.dumps(model_config),
-                            custom_objects=custom_objects
-                        )
-
-                        # Load weights
-                        model.load_weights(model_path)
-                        print("✅ Model rebuilt and weights loaded successfully")
-                        return model
-
-            except Exception as e2:
-                print(f"Rebuild attempt failed: {e2}")
-
-                # Method 3: Manually recreate the model architecture
-                print("Attempting manual model recreation...")
-                return create_yamnet_model_manually()
-
-    except Exception as e:
-        error_traceback = traceback.format_exc()
-        print(f"❌ All model loading attempts failed:\n{error_traceback}")
-        raise RuntimeError(f"Could not load model: {str(e)}")
-
-
-def create_yamnet_model_manually():
-    """
-    Manually recreate the YAMNet fine-tuned model architecture.
-    Use this as fallback if model file is corrupted or incompatible.
-    """
-    print("Creating model architecture manually...")
-
-    # Initialize YAMNet
-    initialize_yamnet()
-
-    # Recreate the model architecture (must match training architecture)
-    audio_input = tf.keras.layers.Input(shape=(None,), dtype=tf.float32, name='audio_input')
-
-    # YAMNet embeddings
-    yamnet_embeddings = YAMNetEmbeddingLayer(name='yamnet_embeddings')(audio_input)
-
-    # Global average pooling
-    pooled = tf.keras.layers.GlobalAveragePooling1D(name='global_avg_pool')(yamnet_embeddings)
-
-    # Dropout
-    dropout1 = tf.keras.layers.Dropout(0.5, name='dropout')(pooled)
-
-    # Dense layers
-    dense1 = tf.keras.layers.Dense(512, activation='relu', name='dense1')(dropout1)
-    dropout2 = tf.keras.layers.Dropout(0.3, name='dropout2')(dense1)
-    dense2 = tf.keras.layers.Dense(256, activation='relu', name='dense2')(dropout2)
-
-    # Output layer (3 classes: Drone, Bird, Noise)
-    output = tf.keras.layers.Dense(3, activation='softmax', name='predictions')(dense2)
-
-    # Create model
-    model = tf.keras.Model(inputs=audio_input, outputs=output, name='yamnet_finetuned')
-
-    print("⚠️ Model architecture created, but weights are NOT loaded!")
-    print("⚠️ You need to retrain the model or fix the .h5 file")
-
-    return model
-
-
-# Now update the analyze_audio_detect_bird_and_drone function
-# Replace the analyze_audio_detect_bird_and_drone function in views.py with this:
-
-# Replace the analyze_audio_detect_bird_and_drone function in views.py with this:
+# =============================================================================
+# DRONE/BIRD AUDIO DETECTION
+# =============================================================================
 
 @csrf_exempt
 def analyze_audio_detect_bird_and_drone(request):
-    """
-    FIXED: Proper model loading and prediction with YAMNet.
-    """
-    if request.method != 'POST':
-        return HttpResponseBadRequest("Invalid request method.")
+    """Analyze audio for drone/bird classification using YAMNet."""
+    error_response = validate_post_request(request)
+    if error_response:
+        return error_response
 
-    try:
-        body_data = json.loads(request.body)
-        audio_data_uri = body_data.get('audio_data')
-        filename = body_data.get('filename', 'audio_file.wav')
-        target_sample_rate = body_data.get('target_sample_rate', TARGET_SAMPLE_RATE_AUDIO)
-    except json.JSONDecodeError as e:
-        return JsonResponse(
-            {"error": f"Invalid JSON in request body: {str(e)}"},
-            status=400
-        )
+    # Parse request
+    audio_data_uri, filename, target_sr, error_response = parse_audio_request(request)
+    if error_response:
+        return error_response
 
-    if not audio_data_uri:
-        return JsonResponse({"error": "No audio data received."}, status=400)
+    # Decode audio
+    decoded_bytes, error_response = decode_audio_data(audio_data_uri)
+    if error_response:
+        return error_response
 
-    # Decode audio data
-    try:
-        if ',' in audio_data_uri:
-            header, encoded = audio_data_uri.split(',', 1)
-        else:
-            encoded = audio_data_uri
-        decoded_bytes = base64.b64decode(encoded)
-    except Exception as e:
-        return JsonResponse({"error": f"Failed to decode audio data: {str(e)}"}, status=400)
-
+    if not ML_AVAILABLE:
+        return JsonResponse({
+            "error": "ML dependencies not available. Please install librosa and tensorflow."
+        }, status=500)
 
     temp_audio_path = None
     try:
-        # Save temporary audio file
-        ext = os.path.splitext(filename)[1] or '.wav'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-            tmp_file.write(decoded_bytes)
-            temp_audio_path = tmp_file.name
-
+        # Save and load audio
+        temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
         print(f"[DETECT] Loading audio file: {filename}")
-
-        # Load audio with librosa
-        audio_original, sr_original = librosa.load(temp_audio_path, sr=None, mono=True)
-
-        # Limit duration to 30 seconds
-        MAX_DURATION_SECONDS = 30
-        max_samples = MAX_DURATION_SECONDS * sr_original
-
-        if len(audio_original) > max_samples:
-            print(f"[DETECT] Audio too long. Truncating to {MAX_DURATION_SECONDS}s...")
-            audio_original = audio_original[:max_samples]
-
-        # Resample to 16kHz (YAMNet requirement)
-        if sr_original != target_sample_rate:
-            audio = librosa.resample(
-                audio_original,
-                orig_sr=sr_original,
-                target_sr=target_sample_rate
-            )
-            sr = target_sample_rate
-        else:
-            audio = audio_original
-            sr = sr_original
-
+        
+        audio, sr, sr_original = load_and_resample_audio(temp_audio_path, target_sr)
         print(f"[DETECT] Audio processed: {len(audio)} samples at {sr} Hz")
-
-        # Normalize audio to [-1, 1] range
-        max_val = np.max(np.abs(audio))
-        if max_val > 0:
-            audio = audio / max_val
-
-        # FFT analysis for visualization
-        fft = np.fft.fft(audio)
-        fft_magnitude = np.abs(fft[:len(fft) // 2])
-        fft_frequencies = np.fft.fftfreq(len(audio), 1 / sr)[:len(fft) // 2]
-
-        threshold = np.max(fft_magnitude) * 0.01
-        significant_freqs = fft_frequencies[fft_magnitude > threshold]
-        max_frequency = np.max(significant_freqs) if len(significant_freqs) > 0 else 0
-
-        nyquist_frequency = sr / 2
-
-        # Downsample FFT for plotting
-        downsample_factor = max(1, len(fft_frequencies) // 1000)
-        fft_frequencies_plot = fft_frequencies[::downsample_factor].tolist()
-        fft_magnitude_plot = fft_magnitude[::downsample_factor].tolist()
 
         # Check if model exists
         if not os.path.exists(MODEL_PATH):
@@ -629,108 +709,71 @@ def analyze_audio_detect_bird_and_drone(request):
                 "model_path": MODEL_PATH
             }, status=500)
 
+        # Load model and predict
         try:
-            print("[DETECT] Initializing YAMNet...")
-            from .yamnet_utils import initialize_yamnet, load_finetuned_model, predict_audio_class
-
-            # Initialize YAMNet first
+            print("[DETECT] Initializing YAMNet and loading model...")
             initialize_yamnet()
-            print("[DETECT] ✅ YAMNet initialized")
-
-            # Load fine-tuned model
-            print(f"[DETECT] Loading model from {MODEL_PATH}...")
             model = load_finetuned_model(MODEL_PATH)
-            print("[DETECT] ✅ Model loaded successfully")
-
-            # Make prediction using the utility function
+            
             print("[DETECT] Running prediction...")
-            prediction_result = predict_audio_class(
-                model=model,
-                audio_array=audio,
-                class_names=CLASS_NAMES
-            )
-
-            print(f"[DETECT] ✅ Prediction complete")
-            print(f"[DETECT] Result: {prediction_result['predicted_class']} "
+            prediction_result = predict_audio_class(model, audio, CLASS_NAMES)
+            
+            print(f"[DETECT] ✅ Result: {prediction_result['predicted_class']} "
                   f"({prediction_result['confidence']:.2%} confidence)")
 
-            # Prepare response
-            response_data = {
-                "predicted_class": prediction_result['predicted_class'],
-                "probabilities": prediction_result['probabilities'],
-                "confidence": prediction_result['confidence'],
-                "waveform": audio.tolist(),
-                "sr": sr,
-                "original_sr": sr_original,
-                "class_names": CLASS_NAMES,
-                "filename": filename,
-                "max_frequency": float(max_frequency),
-                "nyquist_frequency": float(nyquist_frequency),
-                "fft_frequencies": fft_frequencies_plot,
-                "fft_magnitudes": fft_magnitude_plot,
-                "audio_duration": float(len(audio) / sr),
-                "audio_samples": len(audio)
-            }
+            # Build response
+            response_data = build_audio_response(audio, sr, sr_original, filename, {
+                'predicted_class': prediction_result['predicted_class'],
+                'probabilities': prediction_result['probabilities'],
+                'confidence': prediction_result['confidence'],
+                'class_names': CLASS_NAMES,
+                'audio_duration': float(len(audio) / sr),
+                'audio_samples': len(audio)
+            })
 
             return JsonResponse(response_data)
 
         except Exception as model_error:
-            error_traceback = traceback.format_exc()
-            print(f"[DETECT] ❌ Model execution error:\n{error_traceback}")
+            print(f"[DETECT] ❌ Model execution error:\n{traceback.format_exc()}")
             return JsonResponse({
                 "error": f"Model execution failed: {str(model_error)}",
-                "details": error_traceback,
                 "suggestion": "The model file may be incompatible. Check that yamnet_finetuned.h5 is properly trained."
             }, status=500)
 
     except Exception as e:
-        error_traceback = traceback.format_exc()
-        print(f"[DETECT] ❌ Audio Analysis Error:\n{error_traceback}")
+        print(f"[DETECT] ❌ Audio Analysis Error:\n{traceback.format_exc()}")
         return JsonResponse({
-            "error": f"Audio analysis failed: {str(e)}",
-            "traceback": error_traceback
+            "error": f"Audio analysis failed: {str(e)}"
         }, status=500)
 
     finally:
-        # Cleanup temporary file
-        if temp_audio_path and os.path.exists(temp_audio_path):
-            try:
-                os.unlink(temp_audio_path)
-            except Exception as e:
-                print(f"[DETECT] Cleanup warning: {e}")
+        cleanup_temp_file(temp_audio_path)
 
-# ========== FIXED: VOICE GENDER DETECTION ==========
+
+# =============================================================================
+# VOICE GENDER DETECTION
+# =============================================================================
+# VOICE GENDER DETECTION
+# =============================================================================
+
 @csrf_exempt
 def analyze_voices_gender(request):
-    """
-    FIXED: Improved gender detection with better frequency analysis and inaSpeechSegmenter integration.
-    """
-    if request.method != 'POST':
-        return HttpResponseBadRequest("Invalid request method.")
-
-    try:
-        body_data = json.loads(request.body)
-        audio_data_uri = body_data.get('audio_data')
-        filename = body_data.get('filename', 'audio_file.wav')
-        target_sample_rate = body_data.get('target_sample_rate', TARGET_SAMPLE_RATE_AUDIO)
-    except json.JSONDecodeError as e:
-        return JsonResponse(
-            {"error": f"Invalid JSON. Audio may be too large: {str(e)}"},
-            status=400
-        )
-
-    if not audio_data_uri:
-        return JsonResponse({"error": "No audio data received."}, status=400)
-
-    try:
-        if ',' in audio_data_uri:
-            header, encoded = audio_data_uri.split(',', 1)
-        else:
-            encoded = audio_data_uri
-        decoded_bytes = base64.b64decode(encoded)
-    except Exception as e:
-        return JsonResponse({"error": f"Failed to decode audio: {str(e)}"}, status=400)
-
+    """Gender detection with frequency analysis and inaSpeechSegmenter integration."""
+    # Validate request
+    error_response = validate_post_request(request)
+    if error_response:
+        return error_response
+    
+    # Parse audio request
+    audio_data_uri, filename, target_sample_rate, error_response = parse_audio_request(request)
+    if error_response:
+        return error_response
+    
+    # Decode audio data
+    decoded_bytes, error_response = decode_audio_data(audio_data_uri)
+    if error_response:
+        return error_response
+    
     temp_audio_path = None
     temp_wav_path = None
 
@@ -750,49 +793,21 @@ def analyze_voices_gender(request):
         ffmpeg_available = check_ffmpeg()
         print(f"[GENDER] FFmpeg available: {ffmpeg_available}")
 
-        # Save audio file
-        ext = os.path.splitext(filename)[1].lower() or '.wav'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-            tmp_file.write(decoded_bytes)
-            temp_audio_path = tmp_file.name
-
+        # Save temporary audio file
+        temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
         print(f"[GENDER] Processing: {filename}")
 
-        # Load audio
-        audio_original, sr_original = librosa.load(temp_audio_path, sr=None, mono=True)
-
-        MAX_DURATION_SECONDS = 30
-        max_samples = MAX_DURATION_SECONDS * sr_original
-
-        if len(audio_original) > max_samples:
-            audio_original = audio_original[:max_samples]
-
-        if sr_original != target_sample_rate:
-            audio = librosa.resample(audio_original, orig_sr=sr_original, target_sr=target_sample_rate)
-            sr = target_sample_rate
-        else:
-            audio = audio_original
-            sr = sr_original
-
-        if np.max(np.abs(audio)) > 0:
-            audio = audio / np.max(np.abs(audio))
-
+        # Load and resample audio (keep original for WAV conversion)
+        audio, sr, sr_original, audio_original = load_and_resample_audio(
+            temp_audio_path, 
+            target_sample_rate,
+            max_duration=30,
+            return_original=True
+        )
         print(f"[GENDER] Audio: {len(audio)} samples at {sr} Hz")
 
-        # FFT analysis
-        fft = np.fft.fft(audio)
-        fft_magnitude = np.abs(fft[:len(fft) // 2])
-        fft_frequencies = np.fft.fftfreq(len(audio), 1 / sr)[:len(fft) // 2]
-
-        threshold = np.max(fft_magnitude) * 0.01
-        significant_freqs = fft_frequencies[fft_magnitude > threshold]
-        max_frequency = np.max(significant_freqs) if len(significant_freqs) > 0 else 0
-
-        nyquist_frequency = sr / 2
-
-        downsample_factor = max(1, len(fft_frequencies) // 1000)
-        fft_frequencies_plot = fft_frequencies[::downsample_factor].tolist()
-        fft_magnitude_plot = fft_magnitude[::downsample_factor].tolist()
+        # Compute FFT analysis
+        fft_data = compute_fft_analysis(audio, sr)
 
         # ========== IMPROVED GENDER DETECTION ==========
         use_fallback = False
@@ -981,10 +996,10 @@ def analyze_voices_gender(request):
             "sr": sr,
             "original_sr": sr_original,
             "filename": filename,
-            "max_frequency": float(max_frequency),
-            "nyquist_frequency": float(nyquist_frequency),
-            "fft_frequencies": fft_frequencies_plot,
-            "fft_magnitudes": fft_magnitude_plot,
+            "max_frequency": fft_data['max_frequency'],
+            "nyquist_frequency": fft_data['nyquist_frequency'],
+            "fft_frequencies": fft_data['fft_frequencies_plot'],
+            "fft_magnitudes": fft_data['fft_magnitude_plot'],
             "total_speech_duration": float(total_speech),
             "male_speech_duration": float(male_duration),
             "female_speech_duration": float(female_duration),
@@ -1020,87 +1035,42 @@ def analyze_voices_gender(request):
 # ========== CAR AUDIO ANALYSIS (NO CHANGES NEEDED) ==========
 @csrf_exempt
 def analyze_cars_audio(request):
-    """
-    Handles car audio file upload for visualization only (no ML classification).
-    """
-    if request.method != 'POST':
-        return HttpResponseBadRequest("Invalid request method.")
+    """Car audio file upload for visualization only (no ML classification)."""
+    # Validate request
+    error_response = validate_post_request(request)
+    if error_response:
+        return error_response
+    
+    # Parse audio request
+    audio_data_uri, filename, target_sample_rate, error_response = parse_audio_request(request)
+    if error_response:
+        return error_response
+    
+    # Decode audio data
+    decoded_bytes, error_response = decode_audio_data(audio_data_uri)
+    if error_response:
+        return error_response
 
-    try:
-        body_data = json.loads(request.body)
-        audio_data_uri = body_data.get('audio_data')
-        filename = body_data.get('filename', 'audio_file.wav')
-        target_sample_rate = body_data.get('target_sample_rate', TARGET_SAMPLE_RATE_AUDIO)
-    except json.JSONDecodeError as e:
-        return JsonResponse(
-            {"error": f"Invalid JSON: {str(e)}"},
-            status=400
-        )
-
-    if not audio_data_uri:
-        return JsonResponse({"error": "No audio data received."}, status=400)
-
-    try:
-        if ',' in audio_data_uri:
-            header, encoded = audio_data_uri.split(',', 1)
-        else:
-            encoded = audio_data_uri
-        decoded_bytes = base64.b64decode(encoded)
-    except Exception as e:
-        return JsonResponse({"error": f"Failed to decode audio: {str(e)}"}, status=400)
+    if not ML_AVAILABLE:
+        return JsonResponse({
+            "error": "ML dependencies not available. Please install librosa."
+        }, status=500)
 
     temp_audio_path = None
     try:
-        ext = os.path.splitext(filename)[1] or '.wav'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-            tmp_file.write(decoded_bytes)
-            temp_audio_path = tmp_file.name
+        # Save, load, and resample audio
+        temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
+        audio, sr, sr_original = load_and_resample_audio(
+            temp_audio_path,
+            target_sample_rate,
+            max_duration=30
+        )
 
-        audio_original, sr_original = librosa.load(temp_audio_path, sr=None, mono=True)
+        # Compute FFT analysis
+        fft_data = compute_fft_analysis(audio, sr)
 
-        MAX_DURATION_SECONDS = 30
-        max_samples = MAX_DURATION_SECONDS * sr_original
-
-        if len(audio_original) > max_samples:
-            audio_original = audio_original[:max_samples]
-
-        if sr_original != target_sample_rate:
-            audio = librosa.resample(audio_original, orig_sr=sr_original, target_sr=target_sample_rate)
-            sr = target_sample_rate
-        else:
-            audio = audio_original
-            sr = sr_original
-
-        if np.max(np.abs(audio)) > 0:
-            audio = audio / np.max(np.abs(audio))
-
-        # FFT analysis
-        fft = np.fft.fft(audio)
-        fft_magnitude = np.abs(fft[:len(fft) // 2])
-        fft_frequencies = np.fft.fftfreq(len(audio), 1 / sr)[:len(fft) // 2]
-
-        threshold = np.max(fft_magnitude) * 0.01
-        significant_freqs = fft_frequencies[fft_magnitude > threshold]
-        max_frequency = np.max(significant_freqs) if len(significant_freqs) > 0 else 0
-
-        nyquist_frequency = sr / 2
-
-        downsample_factor = max(1, len(fft_frequencies) // 1000)
-        fft_frequencies_plot = fft_frequencies[::downsample_factor].tolist()
-        fft_magnitude_plot = fft_magnitude[::downsample_factor].tolist()
-
-        response_data = {
-            "waveform": audio.tolist(),
-            "sr": sr,
-            "original_sr": sr_original,
-            "filename": filename,
-            "max_frequency": float(max_frequency),
-            "nyquist_frequency": float(nyquist_frequency),
-            "fft_frequencies": fft_frequencies_plot,
-            "fft_magnitudes": fft_magnitude_plot
-        }
-
-        return JsonResponse(response_data)
+        # Build response
+        return build_audio_response(audio, sr, sr_original, filename, fft_data)
 
     except Exception as e:
         error_traceback = traceback.format_exc()
@@ -1110,11 +1080,7 @@ def analyze_cars_audio(request):
         }, status=500)
 
     finally:
-        if temp_audio_path and os.path.exists(temp_audio_path):
-            try:
-                os.unlink(temp_audio_path)
-            except Exception as e:
-                print(f"Cleanup warning: {e}")
+        cleanup_temp_file(temp_audio_path)
 
 
 # ========== DOPPLER AUDIO GENERATION (NO CHANGES NEEDED) ==========
@@ -1224,35 +1190,21 @@ def generate_doppler_audio(request):
 
 @csrf_exempt
 def apply_anti_aliasing(request):
-    """
-    Apply anti-aliasing to uploaded audio using pretrained neural network.
-    """
-    if request.method != 'POST':
-        return HttpResponseBadRequest("Invalid request method.")
-
-    try:
-        body_data = json.loads(request.body)
-        audio_data_uri = body_data.get('audio_data')
-        filename = body_data.get('filename', 'audio_file.wav')
-        sample_rate = body_data.get('sample_rate', TARGET_SAMPLE_RATE_AUDIO)
-    except json.JSONDecodeError as e:
-        return JsonResponse(
-            {"error": f"Invalid JSON: {str(e)}"},
-            status=400
-        )
-
-    if not audio_data_uri:
-        return JsonResponse({"error": "No audio data received."}, status=400)
-
+    """Apply anti-aliasing to uploaded audio using pretrained neural network."""
+    # Validate request
+    error_response = validate_post_request(request)
+    if error_response:
+        return error_response
+    
+    # Parse audio request
+    audio_data_uri, filename, sample_rate, error_response = parse_audio_request(request)
+    if error_response:
+        return error_response
+    
     # Decode audio data
-    try:
-        if ',' in audio_data_uri:
-            header, encoded = audio_data_uri.split(',', 1)
-        else:
-            encoded = audio_data_uri
-        decoded_bytes = base64.b64decode(encoded)
-    except Exception as e:
-        return JsonResponse({"error": f"Failed to decode audio: {str(e)}"}, status=400)
+    decoded_bytes, error_response = decode_audio_data(audio_data_uri)
+    if error_response:
+        return error_response
 
     temp_audio_path = None
 
@@ -1267,45 +1219,20 @@ def apply_anti_aliasing(request):
             }, status=500)
 
         # Save temporary audio file
-        ext = os.path.splitext(filename)[1].lower() or '.wav'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-            tmp_file.write(decoded_bytes)
-            temp_audio_path = tmp_file.name
-
+        temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
         print(f"[ANTI-ALIAS] Loading audio: {filename}")
 
-        # Load audio with librosa
-        try:
-            import librosa
-        except ImportError:
+        # Load and resample audio (model expects 16kHz)
+        if not ML_AVAILABLE:
             return JsonResponse({
                 "error": "librosa is required for anti-aliasing. Please install it."
             }, status=500)
 
-        audio_original, sr_original = librosa.load(temp_audio_path, sr=None, mono=True)
-
-        # Limit duration to 30 seconds
-        MAX_DURATION_SECONDS = 30
-        max_samples = MAX_DURATION_SECONDS * sr_original
-
-        if len(audio_original) > max_samples:
-            print(f"[ANTI-ALIAS] Audio too long. Truncating to {MAX_DURATION_SECONDS}s...")
-            audio_original = audio_original[:max_samples]
-
-        # Resample to 16kHz if needed (model expects 16kHz)
-        target_sr = 16000
-        if sr_original != target_sr:
-            audio = librosa.resample(audio_original, orig_sr=sr_original, target_sr=target_sr)
-            sr = target_sr
-        else:
-            audio = audio_original
-            sr = sr_original
-
-        # Normalize audio
-        max_val = np.max(np.abs(audio))
-        if max_val > 0:
-            audio = audio / max_val
-
+        audio, sr, sr_original = load_and_resample_audio(
+            temp_audio_path,
+            target_sr=16000,
+            max_duration=30
+        )
         print(f"[ANTI-ALIAS] Audio loaded: {len(audio)} samples at {sr} Hz")
 
         # Initialize anti-aliaser
@@ -1407,35 +1334,21 @@ def apply_anti_aliasing(request):
 
 @csrf_exempt
 def predict_car_speed(request):
-    """
-    Predict vehicle speed from audio using the trained model.
-    Includes fallback mechanisms and better error handling.
-    """
-    if request.method != 'POST':
-        return HttpResponseBadRequest("Invalid request method.")
-
-    try:
-        body_data = json.loads(request.body)
-        audio_data_uri = body_data.get('audio_data')
-        filename = body_data.get('filename', 'audio_file.wav')
-    except json.JSONDecodeError as e:
-        return JsonResponse(
-            {"error": f"Invalid JSON: {str(e)}"},
-            status=400
-        )
-
-    if not audio_data_uri:
-        return JsonResponse({"error": "No audio data received."}, status=400)
-
+    """Predict vehicle speed from audio using the trained model."""
+    # Validate request
+    error_response = validate_post_request(request)
+    if error_response:
+        return error_response
+    
+    # Parse audio request
+    audio_data_uri, filename, _, error_response = parse_audio_request(request)
+    if error_response:
+        return error_response
+    
     # Decode audio data
-    try:
-        if ',' in audio_data_uri:
-            header, encoded = audio_data_uri.split(',', 1)
-        else:
-            encoded = audio_data_uri
-        decoded_bytes = base64.b64decode(encoded)
-    except Exception as e:
-        return JsonResponse({"error": f"Failed to decode audio: {str(e)}"}, status=400)
+    decoded_bytes, error_response = decode_audio_data(audio_data_uri)
+    if error_response:
+        return error_response
 
     temp_audio_path = None
 
@@ -1465,11 +1378,7 @@ def predict_car_speed(request):
             }, status=500)
 
         # Save temporary audio file
-        ext = os.path.splitext(filename)[1].lower() or '.wav'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-            tmp_file.write(decoded_bytes)
-            temp_audio_path = tmp_file.name
-
+        temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
         print(f"[SPEED] Loading audio: {filename}")
 
         # Import utilities
@@ -1585,26 +1494,13 @@ def predict_car_speed(request):
 
         # Get additional audio analysis for visualization
         try:
-            audio_full, sr = librosa.load(temp_audio_path, sr=16000, mono=True)
+            # Load audio for visualization
+            audio_full, sr, _ = load_and_resample_audio(temp_audio_path, target_sr=16000)
+            
+            # Compute FFT
+            fft_data = compute_fft_analysis(audio_full, sr)
 
-            # Normalize
-            if np.max(np.abs(audio_full)) > 0:
-                audio_full = audio_full / np.max(np.abs(audio_full))
-
-            # FFT analysis
-            fft = np.fft.fft(audio_full)
-            fft_magnitude = np.abs(fft[:len(fft) // 2])
-            fft_frequencies = np.fft.fftfreq(len(audio_full), 1 / sr)[:len(fft) // 2]
-
-            threshold = np.max(fft_magnitude) * 0.01
-            significant_freqs = fft_frequencies[fft_magnitude > threshold]
-            max_frequency = np.max(significant_freqs) if len(significant_freqs) > 0 else 0
-
-            # Downsample for plotting
-            downsample_factor = max(1, len(fft_frequencies) // 1000)
-            fft_frequencies_plot = fft_frequencies[::downsample_factor].tolist()
-            fft_magnitude_plot = fft_magnitude[::downsample_factor].tolist()
-
+            # Downsample waveform for plotting
             waveform_downsample = max(1, len(audio_full) // 10000)
             waveform_plot = audio_full[::waveform_downsample].tolist()
 
@@ -1612,9 +1508,12 @@ def predict_car_speed(request):
             print(f"[SPEED] Warning: Visualization data generation failed: {viz_error}")
             # Use minimal visualization data
             waveform_plot = []
-            fft_frequencies_plot = []
-            fft_magnitude_plot = []
-            max_frequency = 0
+            fft_data = {
+                'fft_frequencies_plot': [],
+                'fft_magnitude_plot': [],
+                'max_frequency': 0,
+                'nyquist_frequency': 8000
+            }
             sr = 16000
 
         # Prepare successful response
@@ -1627,9 +1526,9 @@ def predict_car_speed(request):
             "waveform": waveform_plot,
             "sr": sr,
             "filename": filename,
-            "max_frequency": float(max_frequency),
-            "fft_frequencies": fft_frequencies_plot,
-            "fft_magnitudes": fft_magnitude_plot,
+            "max_frequency": fft_data['max_frequency'],
+            "fft_frequencies": fft_data['fft_frequencies_plot'],
+            "fft_magnitudes": fft_data['fft_magnitude_plot'],
             "duration": float(len(audio_full) / sr) if 'audio_full' in locals() else 0,
             "model_info": {
                 "device": str(device),
