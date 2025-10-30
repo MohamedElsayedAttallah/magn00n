@@ -24,16 +24,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const checkpointVariance = document.getElementById('checkpoint-variance');
     const checkpointMae = document.getElementById('checkpoint-mae');
 
-    // Anti-Aliasing Elements
-    const antiAliasingSection = document.getElementById('anti-aliasing-section-cars');
-    const applyAntiAliasingBtn = document.getElementById('apply-anti-aliasing-btn-cars');
-    const antiAliasingStatus = document.getElementById('anti-aliasing-status-cars');
-    const enhancedAudioPlayer = document.getElementById('enhanced-audio-player-cars');
-    const enhancedAudioGraphContainer = document.getElementById('enhanced-audio-graph-container-cars');
-    const enhancedFrequencyGraphContainer = document.getElementById('enhanced-frequency-graph-container-cars');
-    const timeDomainEnhancedDiv = document.getElementById('time-domain-graph-enhanced-cars');
-    const frequencyDomainEnhancedDiv = document.getElementById('frequency-domain-graph-enhanced-cars');
-    const enhancedAudioStats = document.getElementById('enhanced-audio-stats-cars');
+    // Downsampled Speed Prediction Elements
+    const predictDownsampledSpeedBtn = document.getElementById('predict-downsampled-speed-btn');
+    const downsampledSpeedResult = document.getElementById('downsampled-speed-result');
+    const downsampledSpeedValue = document.getElementById('downsampled-speed-value');
+    const downsampledSrDisplay = document.getElementById('downsampled-sr-display');
 
     let uploadedFile = null;
     let audioDataURI = null;
@@ -45,7 +40,6 @@ document.addEventListener('DOMContentLoaded', function() {
     let resampledAudioData = null;
     let sliderTimeout = null;
     let originalDuration = 0;
-    let enhancedAudioData = null;
 
     const MAX_PLOT_POINTS = 2000;
 
@@ -67,16 +61,6 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateStatus(message, alertClass = 'alert-info') {
         statusDiv.className = `alert ${alertClass}`;
         statusDiv.innerHTML = message;
-    }
-
-    function updateAntiAliasingStatus(message, alertClass = 'alert-info') {
-        if (!antiAliasingStatus) {
-            console.error('❌ antiAliasingStatus element not found!');
-            return;
-        }
-        antiAliasingStatus.className = `alert ${alertClass} mt-3`;
-        antiAliasingStatus.innerHTML = message;
-        antiAliasingStatus.style.display = 'block';
     }
 
     function readFileAsDataURI(file) {
@@ -120,23 +104,9 @@ document.addEventListener('DOMContentLoaded', function() {
             playerResampledDiv.style.display = 'none';
             speedPredictionResult.style.display = 'none';
 
-            if (antiAliasingSection) {
-                antiAliasingSection.style.display = 'none';
-            }
-            if (enhancedAudioPlayer) {
-                enhancedAudioPlayer.style.display = 'none';
-            }
-            if (enhancedAudioGraphContainer) {
-                enhancedAudioGraphContainer.style.display = 'none';
-            }
-            if (enhancedFrequencyGraphContainer) {
-                enhancedFrequencyGraphContainer.style.display = 'none';
-            }
-            if (enhancedAudioStats) {
-                enhancedAudioStats.style.display = 'none';
-            }
-            if (antiAliasingStatus) {
-                antiAliasingStatus.style.display = 'none';
+            // Reset downsampled speed result
+            if (downsampledSpeedResult) {
+                downsampledSpeedResult.style.display = 'none';
             }
 
             originalMaxFrequency = 0;
@@ -144,7 +114,6 @@ document.addEventListener('DOMContentLoaded', function() {
             originalAudioData = null;
             resampledAudioData = null;
             originalDuration = 0;
-            enhancedAudioData = null;
 
         } catch (error) {
             updateStatus(`❌ Error reading file: ${error.message}`, 'alert-danger');
@@ -368,16 +337,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
             renderResults(json_data);
 
-            // Show anti-aliasing section
+            // Enable downsampled speed prediction button
             setTimeout(() => {
-                if (antiAliasingSection) {
-                    antiAliasingSection.style.display = 'block';
-                    antiAliasingSection.style.visibility = 'visible';
-                    antiAliasingSection.style.opacity = '1';
-                    console.log('✅ Anti-aliasing section displayed');
-                }
-                if (applyAntiAliasingBtn) {
-                    applyAntiAliasingBtn.disabled = false;
+                if (predictDownsampledSpeedBtn) {
+                    predictDownsampledSpeedBtn.disabled = false;
                 }
             }, 300);
 
@@ -438,9 +401,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Display speed prediction result
             predictedSpeedValue.textContent = `${json_data.predicted_speed_kmh.toFixed(2)} km/h`;
-            checkpointName.textContent = json_data.checkpoint_name;
-            checkpointVariance.textContent = json_data.checkpoint_variance.toFixed(2);
-            checkpointMae.textContent = `${json_data.checkpoint_mae.toFixed(2)} km/h`;
+            
+            // Update model info for CNN14
+            if (json_data.model_name) {
+                checkpointName.textContent = json_data.model_name;
+            } else {
+                checkpointName.textContent = json_data.checkpoint_name || 'CNN14 Model';
+            }
+            
+            // Display model configuration
+            if (json_data.model_config) {
+                checkpointVariance.textContent = `${json_data.model_config.sample_rate} Hz`;
+            } else {
+                checkpointVariance.textContent = json_data.checkpoint_variance ? json_data.checkpoint_variance.toFixed(2) : 'N/A';
+            }
+            
+            // Display duration or MAE
+            if (json_data.model_config) {
+                checkpointMae.textContent = `${json_data.model_config.duration}s clip`;
+            } else {
+                checkpointMae.textContent = json_data.checkpoint_mae ? `${json_data.checkpoint_mae.toFixed(2)} km/h` : 'N/A';
+            }
+            
             speedPredictionResult.style.display = 'block';
 
             // Scroll to result
@@ -659,27 +641,49 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         updateStatus(`Playing audio resampled at ${currentRate} Hz (duration: ${resampledDuration.toFixed(2)}s, original: ${originalDuration.toFixed(2)}s)`, 'alert-info');
     };
 
-    // Anti-Aliasing Button Handler
-    if (applyAntiAliasingBtn) {
-        applyAntiAliasingBtn.onclick = async () => {
-            if (!audioDataURI || !originalAudioData) {
-                updateAntiAliasingStatus("⚠️ Please analyze the audio first before applying anti-aliasing.", 'alert-warning');
+    // Predict Speed on Downsampled Audio Button Handler
+    if (predictDownsampledSpeedBtn) {
+        predictDownsampledSpeedBtn.onclick = async () => {
+            if (!originalAudioData || !uploadedFile) {
+                updateStatus("⚠️ Please analyze the audio first.", 'alert-warning');
                 return;
             }
 
-            applyAntiAliasingBtn.disabled = true;
-            updateAntiAliasingStatus("🔄 Applying anti-aliasing enhancement... This may take a moment.", 'alert-info');
-
-            const csrftoken = getCookie('csrftoken');
+            const downsampledRate = parseInt(resampleSlider.value);
+            predictDownsampledSpeedBtn.disabled = true;
+            updateStatus(`🚗 Predicting speed on downsampled audio (${downsampledRate} Hz)...`, 'alert-info');
 
             try {
-                const requestBody = JSON.stringify({
-                    audio_data: audioDataURI,
-                    filename: uploadedFile.name,
-                    sample_rate: currentSampleRate
+                // Step 1: Downsample audio
+                console.log(`[DOWNSAMPLE] Downsampling from ${currentSampleRate} Hz to ${downsampledRate} Hz`);
+                const downsampledAudio = resampleAudioByDuration(
+                    originalAudioData,
+                    currentSampleRate,
+                    downsampledRate,
+                    originalDuration
+                );
+
+                // Convert downsampled audio to WAV
+                const downsampledWavBuffer = audioArrayToWav(downsampledAudio, downsampledRate);
+                const downsampledBlob = new Blob([downsampledWavBuffer], { type: 'audio/wav' });
+                
+                // Create data URI for downsampled audio
+                const reader = new FileReader();
+                const downsampledDataURI = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result);
+                    reader.readAsDataURL(downsampledBlob);
                 });
 
-                const response = await fetch('/api/apply_anti_aliasing/', {
+                // Step 2: Predict speed on downsampled audio
+                updateStatus(`🚗 Predicting speed on downsampled audio (${downsampledRate} Hz)...`, 'alert-info');
+
+                const csrftoken = getCookie('csrftoken');
+                const requestBody = JSON.stringify({
+                    audio_data: downsampledDataURI,
+                    filename: `downsampled_${downsampledRate}hz_${uploadedFile.name}`
+                });
+
+                const response = await fetch('/api/predict_speed/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -700,7 +704,7 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                         errorMessage = errorText.substring(0, 500);
                     }
 
-                    throw new Error(`Anti-aliasing failed (Status ${response.status}): ${errorMessage}`);
+                    throw new Error(`Speed prediction failed (Status ${response.status}): ${errorMessage}`);
                 }
 
                 const json_data = await response.json();
@@ -709,58 +713,30 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                     throw new Error(json_data.error);
                 }
 
-                enhancedAudioData = json_data;
+                // Display downsampled speed prediction result
+                downsampledSpeedValue.textContent = `${json_data.predicted_speed_kmh.toFixed(2)} km/h`;
+                downsampledSrDisplay.textContent = `${downsampledRate} Hz`;
+                downsampledSpeedResult.style.display = 'block';
 
-                // Display enhanced audio player
-                const enhancedAudioSrc = `data:audio/wav;base64,${json_data.enhanced_audio_b64}`;
-                enhancedAudioPlayer.style.display = 'block';
-                enhancedAudioPlayer.innerHTML = `
-                    <h5 style="color: #79c0ff;">Enhanced Audio Player (After Anti-Aliasing):</h5>
-                    <audio controls src="${enhancedAudioSrc}" style="width: 100%;"></audio>
-                    <div class="mt-2">
-                        <a href="${enhancedAudioSrc}" download="${json_data.filename}" class="btn btn-sm btn-outline-info">
-                            💾 Download Enhanced Audio
-                        </a>
-                    </div>
-                `;
+                // Scroll to result
+                downsampledSpeedResult.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-                // Plot enhanced audio time domain
-                enhancedAudioGraphContainer.style.display = 'block';
-                plotTimeDomain(
-                    json_data.waveform,
-                    json_data.sr,
-                    timeDomainEnhancedDiv,
-                    `Enhanced Audio: Time Domain (${json_data.samples} samples at ${json_data.sr} Hz, Duration: ${json_data.duration.toFixed(2)}s)`,
-                    false
+                updateStatus(
+                    `✅ Speed predicted on downsampled audio (${downsampledRate} Hz): ${json_data.predicted_speed_kmh.toFixed(2)} km/h`,
+                    'alert-success'
                 );
 
-                // Plot enhanced audio frequency domain
-                if (json_data.fft_frequencies && json_data.fft_magnitudes) {
-                    enhancedFrequencyGraphContainer.style.display = 'block';
-                    plotFrequencyDomain(
-                        json_data.fft_frequencies,
-                        json_data.fft_magnitudes,
-                        frequencyDomainEnhancedDiv,
-                        `Enhanced Audio: Frequency Domain (Max Frequency: ${json_data.max_frequency.toFixed(0)} Hz)`
-                    );
-                }
-
-                // Display enhanced audio statistics
-                enhancedAudioStats.style.display = 'block';
-                document.getElementById('enhanced-duration-cars').textContent = `${json_data.duration.toFixed(2)}s`;
-                document.getElementById('enhanced-sr-cars').textContent = `${json_data.sr} Hz`;
-                document.getElementById('enhanced-max-freq-cars').textContent = `${json_data.max_frequency.toFixed(0)} Hz`;
-
-                updateAntiAliasingStatus("✅ Anti-aliasing enhancement complete! Listen to the enhanced audio above.", 'alert-success');
-
             } catch (error) {
-                console.error('Anti-Aliasing Error:', error);
-                updateAntiAliasingStatus(`❌ Anti-aliasing failed: ${error.message}`, 'alert-danger');
+                console.error('Downsampled Speed Prediction Error:', error);
+                updateStatus(`❌ Prediction failed: ${error.message}`, 'alert-danger');
             } finally {
-                applyAntiAliasingBtn.disabled = false;
+                predictDownsampledSpeedBtn.disabled = false;
             }
         };
-    } else {
-        console.error('❌ applyAntiAliasingBtn not found - cannot attach event handler!');
+    }
+
+    function updateAliasingStatus(message, alertClass = 'alert-info') {
+        // Legacy function - can be removed if no longer needed
+        console.log(`[LEGACY] ${message}`);
     }
 });

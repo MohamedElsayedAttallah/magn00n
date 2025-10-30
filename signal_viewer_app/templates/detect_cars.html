@@ -28,15 +28,15 @@
             <h1 id="predicted-speed-value" style="color: #58a6ff; font-size: 4rem; font-weight: bold;">0.00 km/h</h1>
             <div class="row mt-3">
                 <div class="col-md-4">
-                    <small class="text-secondary">Model Checkpoint</small>
+                    <small class="text-secondary">Model</small>
                     <p id="checkpoint-name" style="color: #c9d1d9;">-</p>
                 </div>
                 <div class="col-md-4">
-                    <small class="text-secondary">Model Variance</small>
+                    <small class="text-secondary">Sample Rate</small>
                     <p id="checkpoint-variance" style="color: #c9d1d9;">-</p>
                 </div>
                 <div class="col-md-4">
-                    <small class="text-secondary">Model MAE</small>
+                    <small class="text-secondary">Clip Duration</small>
                     <p id="checkpoint-mae" style="color: #c9d1d9;">-</p>
                 </div>
             </div>
@@ -103,7 +103,26 @@
                 </div>
             </div>
             <div class="text-center mb-3">
-                <button id="play-cars-resampled-btn" class="btn btn-info">Play Resampled Audio</button>
+                <button id="play-cars-resampled-btn" class="btn btn-info me-2">Play Resampled Audio</button>
+                <button id="predict-downsampled-speed-btn" class="btn btn-danger">🚗 Predict Speed (Downsampled)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Downsampled Speed Prediction Result -->
+    <div id='downsampled-speed-result' class="mt-4 text-center" style="display: none;">
+        <div class="card p-4" style="background-color: #0d1117; border: 3px solid #f78166;">
+            <h3 style="color: #f78166;">🏎️ Predicted Speed (Downsampled Audio)</h3>
+            <h1 id="downsampled-speed-value" style="color: #f78166; font-size: 4rem; font-weight: bold;">0.00 km/h</h1>
+            <div class="row mt-3">
+                <div class="col-md-6">
+                    <small class="text-secondary">Downsampled Rate</small>
+                    <p id="downsampled-sr-display" style="color: #c9d1d9;">-</p>
+                </div>
+                <div class="col-md-6">
+                    <small class="text-secondary">Model</small>
+                    <p id="downsampled-model-name" style="color: #c9d1d9;">CNN14</p>
+                </div>
             </div>
         </div>
     </div>
@@ -121,53 +140,6 @@
     <!-- Resampled Frequency Domain Graph -->
     <div class="graph-container mt-4" id="cars-resampled-freq-container" style="display: none;">
         <div id='frequency-domain-graph-cars-resampled' style='height: 350px;'></div>
-    </div>
-
-    <!-- ANTI-ALIASING SECTION -->
-    <div id='anti-aliasing-section-cars' class="mt-5" style="display: none; background-color: #1a1f2e; padding: 30px; border-radius: 10px; border: 3px solid #FFA500;">
-        <h3 class="text-center mb-4" style="color: #FFA500; font-size: 2rem;">🎵 Anti-Aliasing Enhancement</h3>
-
-        <div class="text-center mb-4">
-            <button id='apply-anti-aliasing-btn-cars' class="btn btn-primary btn-lg" style="font-size: 1.5rem; padding: 15px 40px;">
-                📊 Apply Anti-Aliasing
-            </button>
-        </div>
-
-        <div id='anti-aliasing-status-cars' class="alert alert-info mt-3" role="alert" style="display: none;">
-            Processing...
-        </div>
-
-        <div id='enhanced-audio-player-cars' class="mt-4" style="display: none;">
-            <h5 style="color: #79c0ff;">Enhanced Audio Player (After Anti-Aliasing):</h5>
-        </div>
-
-        <div class="graph-container mt-4" id="enhanced-audio-graph-container-cars" style="display: none;">
-            <div id='time-domain-graph-enhanced-cars' style='height: 350px;'></div>
-        </div>
-
-        <div class="graph-container mt-4" id="enhanced-frequency-graph-container-cars" style="display: none;">
-            <div id='frequency-domain-graph-enhanced-cars' style='height: 350px;'></div>
-        </div>
-
-        <div id='enhanced-audio-stats-cars' class="mt-4" style="display: none;">
-            <div class="card p-3" style="background-color: #0d1117; border: 1px solid #30363d;">
-                <h5 class="text-center mb-3" style="color: #79c0ff;">Enhanced Audio Statistics</h5>
-                <div class="row">
-                    <div class="col-md-4 text-center">
-                        <small class="text-secondary">Duration</small>
-                        <h6 id="enhanced-duration-cars" style="color: #c9d1d9;">0.00s</h6>
-                    </div>
-                    <div class="col-md-4 text-center">
-                        <small class="text-secondary">Sample Rate</small>
-                        <h6 id="enhanced-sr-cars" style="color: #c9d1d9;">16000 Hz</h6>
-                    </div>
-                    <div class="col-md-4 text-center">
-                        <small class="text-secondary">Max Frequency</small>
-                        <h6 id="enhanced-max-freq-cars" style="color: #c9d1d9;">0 Hz</h6>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <div id='cars-debug-info' class="mt-3 text-secondary" style="font-size: 0.8rem;"></div>

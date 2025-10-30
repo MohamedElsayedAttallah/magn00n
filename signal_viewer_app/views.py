@@ -1066,14 +1066,15 @@ def analyze_cars_audio(request):
             max_duration=30
         )
 
-        # Compute FFT analysis
-        fft_data = compute_fft_analysis(audio, sr)
-
-        # Build response
-        return build_audio_response(audio, sr, sr_original, filename, fft_data)
+        # Build response data (build_audio_response already computes FFT internally)
+        response_data = build_audio_response(audio, sr, sr_original, filename)
+        
+        # Return JSON response
+        return JsonResponse(response_data)
 
     except Exception as e:
         error_traceback = traceback.format_exc()
+        print(f"[ANALYZE_CARS] Error: {error_traceback}")
         return JsonResponse({
             "error": f"Audio analysis failed: {str(e)}",
             "traceback": error_traceback
@@ -1333,14 +1334,18 @@ def apply_anti_aliasing(request):
 # Replace the predict_car_speed function in views.py with this improved version
 
 @csrf_exempt
+@csrf_exempt
 def predict_car_speed(request):
-    """Predict vehicle speed from audio using the trained model."""
+    """
+    Predict vehicle speed from audio using CNN14 model.
+    Accepts drag-and-drop audio file uploads.
+    """
     # Validate request
     error_response = validate_post_request(request)
     if error_response:
         return error_response
     
-    # Parse audio request
+    # Parse audio request (supports drag-and-drop)
     audio_data_uri, filename, _, error_response = parse_audio_request(request)
     if error_response:
         return error_response
@@ -1353,7 +1358,8 @@ def predict_car_speed(request):
     temp_audio_path = None
 
     try:
-        print("[SPEED] Processing speed prediction request...")
+        print("[SPEED_CNN14] Processing speed prediction request...")
+        print(f"[SPEED_CNN14] Filename: {filename}")
 
         # Check PyTorch availability
         try:
@@ -1363,130 +1369,73 @@ def predict_car_speed(request):
                 "error": "PyTorch is not installed. Please install it: pip install torch"
             }, status=500)
 
-        # Define checkpoint directory
-        CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'assets', 'checkpoints')
+        # Define model path - CNN14 model
+        MODEL_PATH = os.path.join(
+            os.path.dirname(__file__), 
+            'assets', 
+            'speed_estimation', 
+            'best_model (1).pth'
+        )
 
-        print(f"[SPEED] Checkpoint directory: {CHECKPOINT_DIR}")
-        print(f"[SPEED] Directory exists: {os.path.exists(CHECKPOINT_DIR)}")
+        print(f"[SPEED_CNN14] Model path: {MODEL_PATH}")
+        print(f"[SPEED_CNN14] Model exists: {os.path.exists(MODEL_PATH)}")
 
-        # Check if checkpoint directory exists
-        if not os.path.exists(CHECKPOINT_DIR):
+        # Check if model file exists
+        if not os.path.exists(MODEL_PATH):
             return JsonResponse({
-                "error": "Checkpoint directory not found",
-                "checkpoint_dir": CHECKPOINT_DIR,
-                "solution": "Please create the directory and place trained checkpoint files (best_fold_*.pth) there, or run the validation script: python validate_checkpoints.py"
+                "error": "CNN14 model not found",
+                "model_path": MODEL_PATH,
+                "solution": "Please ensure the CNN14 model file 'best_model (1).pth' is in signal_viewer_app/assets/speed_estimation/"
             }, status=500)
 
         # Save temporary audio file
         temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
-        print(f"[SPEED] Loading audio: {filename}")
+        print(f"[SPEED_CNN14] Saved temporary file: {temp_audio_path}")
 
-        # Import utilities
+        # Import CNN14 utilities
         try:
             from .speed_prediction_utils import (
-                find_best_checkpoint,
+                load_model,
+                predict_speed,
                 load_audio_clip,
-                compute_features,
-                AdvancedSpeedPredictor
+                compute_features
             )
         except ImportError as import_error:
             return JsonResponse({
                 "error": f"Speed prediction utilities not found: {str(import_error)}",
-                "solution": "Ensure speed_prediction_utils.py exists in signal_viewer_app/"
+                "solution": "Ensure speed_prediction_utils.py exists in signal_viewer_app/ with CNN14 implementation"
             }, status=500)
 
-        # Try to find and load checkpoint
-        try:
-            checkpoint_path, variance = find_best_checkpoint(CHECKPOINT_DIR)
-            print(f"[SPEED] Using checkpoint: {checkpoint_path}")
-        except Exception as checkpoint_error:
-            error_trace = traceback.format_exc()
-            print(f"[SPEED] Checkpoint loading failed:\n{error_trace}")
-
-            # Return detailed error with instructions
-            return JsonResponse({
-                "error": "Failed to load model checkpoints",
-                "details": str(checkpoint_error),
-                "checkpoint_dir": CHECKPOINT_DIR,
-                "solutions": [
-                    "Run: python validate_checkpoints.py",
-                    "Ensure checkpoint files are not corrupted (should be 10-50 MB each)",
-                    "Re-train the model if checkpoints are invalid",
-                    "Check PyTorch version compatibility",
-                    "Create dummy checkpoint for testing: python validate_checkpoints.py (select 'yes' when prompted)"
-                ],
-                "traceback": error_trace
-            }, status=500)
-
-        # Load model
+        # Load CNN14 model
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"[SPEED] Using device: {device}")
-
-        model = AdvancedSpeedPredictor(n_mels=64).to(device)
+        print(f"[SPEED_CNN14] Using device: {device}")
 
         try:
-            # PyTorch 2.9+ compatibility: Register numpy safe globals
-            if hasattr(torch.serialization, 'add_safe_globals'):
-                try:
-                    if hasattr(np, '_core'):
-                        torch.serialization.add_safe_globals([np._core.multiarray.scalar])
-                    torch.serialization.add_safe_globals([np.core.multiarray.scalar])
-                except:
-                    pass
-
-            # Load checkpoint with weights_only=False
-            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-
-            # Validate checkpoint structure
-            if not isinstance(checkpoint, dict):
-                raise ValueError(f"Invalid checkpoint format: expected dict, got {type(checkpoint)}")
-
-            if 'model_state_dict' not in checkpoint:
-                raise ValueError(f"Checkpoint missing 'model_state_dict'. Available keys: {list(checkpoint.keys())}")
-
-            model.load_state_dict(checkpoint['model_state_dict'])
-            model.eval()
-
-            print("[SPEED] ✅ Model loaded successfully")
-
+            model = load_model(MODEL_PATH, device=device)
+            print("[SPEED_CNN14] ✅ CNN14 model loaded successfully")
         except Exception as model_load_error:
             error_trace = traceback.format_exc()
-            print(f"[SPEED] Model loading error:\n{error_trace}")
+            print(f"[SPEED_CNN14] Model loading error:\n{error_trace}")
 
             return JsonResponse({
-                "error": "Failed to load model weights",
+                "error": "Failed to load CNN14 model",
                 "details": str(model_load_error),
-                "checkpoint_path": str(checkpoint_path),
+                "model_path": MODEL_PATH,
                 "solutions": [
-                    "Checkpoint file may be corrupted",
-                    "Re-download or re-train the model",
-                    "Check checkpoint structure with: python validate_checkpoints.py"
+                    "Verify model file is not corrupted",
+                    "Check model was trained with CNN14 architecture",
+                    "Ensure PyTorch version compatibility"
                 ],
                 "traceback": error_trace
             }, status=500)
 
-        # Load and process audio
+        # Predict speed using CNN14
         try:
-            audio = load_audio_clip(temp_audio_path)
-            features = compute_features(audio).to(device)
-            print(f"[SPEED] Audio features shape: {features.shape}")
-        except Exception as audio_error:
-            error_trace = traceback.format_exc()
-            return JsonResponse({
-                "error": f"Failed to process audio: {str(audio_error)}",
-                "traceback": error_trace
-            }, status=500)
-
-        # Predict speed
-        try:
-            with torch.no_grad():
-                speed_tensor = model(features, return_aux=False)
-                predicted_speed = speed_tensor.item()
-
-            print(f"[SPEED] ✅ Predicted speed: {predicted_speed:.2f} km/h")
-
+            predicted_speed = predict_speed(model, temp_audio_path, device=device)
+            print(f"[SPEED_CNN14] ✅ Predicted speed: {predicted_speed:.2f} km/h")
         except Exception as prediction_error:
             error_trace = traceback.format_exc()
+            print(f"[SPEED_CNN14] Prediction error:\n{error_trace}")
             return JsonResponse({
                 "error": f"Prediction failed: {str(prediction_error)}",
                 "traceback": error_trace
@@ -1494,7 +1443,7 @@ def predict_car_speed(request):
 
         # Get additional audio analysis for visualization
         try:
-            # Load audio for visualization
+            # Load audio for visualization (16 kHz for display)
             audio_full, sr, _ = load_and_resample_audio(temp_audio_path, target_sr=16000)
             
             # Compute FFT
@@ -1505,14 +1454,14 @@ def predict_car_speed(request):
             waveform_plot = audio_full[::waveform_downsample].tolist()
 
         except Exception as viz_error:
-            print(f"[SPEED] Warning: Visualization data generation failed: {viz_error}")
+            print(f"[SPEED_CNN14] Warning: Visualization data generation failed: {viz_error}")
             # Use minimal visualization data
             waveform_plot = []
             fft_data = {
                 'fft_frequencies_plot': [],
                 'fft_magnitude_plot': [],
                 'max_frequency': 0,
-                'nyquist_frequency': 8000
+                'nyquist_frequency': 16000
             }
             sr = 16000
 
@@ -1520,9 +1469,13 @@ def predict_car_speed(request):
         response_data = {
             "success": True,
             "predicted_speed_kmh": float(predicted_speed),
-            "checkpoint_name": os.path.basename(str(checkpoint_path)),
-            "checkpoint_variance": float(variance),
-            "checkpoint_mae": float(checkpoint.get('val_mae', 0)),
+            "model_name": "CNN14 (PANNs)",
+            "model_config": {
+                "sample_rate": 32000,
+                "duration": 10,
+                "n_mels": 64,
+                "architecture": "CNN14"
+            },
             "waveform": waveform_plot,
             "sr": sr,
             "filename": filename,
@@ -1536,21 +1489,21 @@ def predict_car_speed(request):
             }
         }
 
-        print("[SPEED] ✅ Response prepared successfully")
+        print("[SPEED_CNN14] ✅ Response prepared successfully")
         return JsonResponse(response_data)
 
     except Exception as e:
         error_traceback = traceback.format_exc()
-        print(f"[SPEED] ❌ Unexpected error:\n{error_traceback}")
+        print(f"[SPEED_CNN14] ❌ Unexpected error:\n{error_traceback}")
         return JsonResponse({
             "error": f"Speed prediction failed: {str(e)}",
-            "traceback": error_traceback,
-            "suggestion": "Run diagnostic script: python validate_checkpoints.py"
+            "traceback": error_traceback
         }, status=500)
 
     finally:
         if temp_audio_path and os.path.exists(temp_audio_path):
             try:
                 os.unlink(temp_audio_path)
+                print(f"[SPEED_CNN14] Cleaned up temporary file")
             except Exception as e:
-                print(f"[SPEED] Cleanup warning: {e}")
+                print(f"[SPEED_CNN14] Cleanup warning: {e}")
