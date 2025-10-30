@@ -16,8 +16,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const resampleSlider = document.getElementById('voices-resample-slider');
     const currentSrDisplay = document.getElementById('voices-current-sr-display');
     const playResampledBtn = document.getElementById('play-voices-resampled-btn');
-    const resampledPredictionDiv = document.getElementById('voices-resampled-prediction');
-    const resampledResultDiv = document.getElementById('voices-resampled-result');
+
+    // Gender Detection Buttons for Aliased and Enhanced Audio
+    const detectGenderAliasedBtn = document.getElementById('detect-gender-aliased-btn');
+    const detectGenderEnhancedBtn = document.getElementById('detect-gender-enhanced-btn');
+    const aliasedGenderResult = document.getElementById('aliased-gender-result');
+    const enhancedGenderResult = document.getElementById('enhanced-gender-result');
 
     // Anti-Aliasing Elements
     const antiAliasingSection = document.getElementById('anti-aliasing-section');
@@ -34,10 +38,20 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('=== PAGE LOAD VERIFICATION ===');
     console.log('Anti-aliasing section found:', !!antiAliasingSection);
     console.log('Apply button found:', !!applyAntiAliasingBtn);
+    console.log('Detect Gender Aliased button found:', !!detectGenderAliasedBtn);
+    console.log('Detect Gender Enhanced button found:', !!detectGenderEnhancedBtn);
 
     if (!antiAliasingSection) {
         console.error('❌ CRITICAL: anti-aliasing-section NOT FOUND in DOM!');
         console.log('Check if the HTML template includes the section correctly.');
+    }
+    
+    if (!detectGenderAliasedBtn) {
+        console.error('❌ CRITICAL: detect-gender-aliased-btn NOT FOUND in DOM!');
+    }
+    
+    if (!detectGenderEnhancedBtn) {
+        console.error('❌ CRITICAL: detect-gender-enhanced-btn NOT FOUND in DOM!');
     }
 
     let uploadedFile = null;
@@ -121,7 +135,6 @@ document.addEventListener('DOMContentLoaded', function() {
             nyquistSection.style.display = 'none';
             resampledGraphContainer.style.display = 'none';
             playerResampledDiv.style.display = 'none';
-            resampledPredictionDiv.style.display = 'none';
 
             // IMPORTANT: Hide anti-aliasing section when new file is loaded
             if (antiAliasingSection) {
@@ -617,22 +630,6 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                     `Resampled Audio: Time Domain (${resampledAudioData.length} samples at ${newSampleRate} Hz, Duration: ${resampledDuration.toFixed(2)}s)`,
                     showMarkers
                 );
-
-                const genderPrediction = predictGenderFromAudio(resampledAudioData, newSampleRate);
-                const predictedGender = genderPrediction.male > genderPrediction.female ? 'Male' : 'Female';
-                const confidence = Math.max(genderPrediction.male, genderPrediction.female);
-                const predictionColor = (predictedGender === 'Male') ? '#58a6ff' : '#f78166';
-
-                resampledPredictionDiv.style.display = 'block';
-                resampledResultDiv.innerHTML = `
-                    <span style="color: ${predictionColor};">
-                        🎤 ${predictedGender}
-                    </span>
-                    <br>
-                    <small>Confidence: ${(confidence * 100).toFixed(1)}%</small>
-                    <br>
-                    <small class="text-secondary">Est. Frequency: ${genderPrediction.estimatedFrequency.toFixed(1)} Hz</small>
-                `;
             }
         }, 150);
     };
@@ -657,6 +654,34 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         `;
 
         updateStatus(`Playing audio resampled at ${currentRate} Hz (duration: ${resampledDuration.toFixed(2)}s, original: ${originalDuration.toFixed(2)}s)`, 'alert-info');
+
+        // Enable aliased gender detection button after resampled audio is created
+        console.log('🔍 DEBUG: Attempting to enable aliased gender button...');
+        console.log('Button exists:', !!detectGenderAliasedBtn);
+        console.log('Button element:', detectGenderAliasedBtn);
+        
+        if (detectGenderAliasedBtn) {
+            // Try multiple methods to enable the button
+            detectGenderAliasedBtn.disabled = false;
+            detectGenderAliasedBtn.removeAttribute('disabled');
+            
+            // Also try direct DOM manipulation as backup
+            setTimeout(() => {
+                const btn = document.getElementById('detect-gender-aliased-btn');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.removeAttribute('disabled');
+                    btn.classList.remove('disabled');
+                    console.log('✅ Button force-enabled via setTimeout');
+                    console.log('   Final disabled state:', btn.disabled);
+                    console.log('   Has disabled attr:', btn.hasAttribute('disabled'));
+                }
+            }, 100);
+            
+            console.log('✅ Aliased gender detection button enabled (resampled audio ready)');
+        } else {
+            console.error('❌ detectGenderAliasedBtn is null or undefined!');
+        }
     };
 
     // Anti-Aliasing Button Handler
@@ -753,6 +778,30 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
 
                 updateAntiAliasingStatus("✅ Anti-aliasing enhancement complete! Listen to the enhanced audio above.", 'alert-success');
 
+                // Enable gender detection button for enhanced audio
+                console.log('🔍 DEBUG: Attempting to enable enhanced gender button...');
+                if (detectGenderEnhancedBtn) {
+                    detectGenderEnhancedBtn.disabled = false;
+                    detectGenderEnhancedBtn.removeAttribute('disabled');
+                    
+                    // Also try direct DOM manipulation as backup
+                    setTimeout(() => {
+                        const btn = document.getElementById('detect-gender-enhanced-btn');
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.removeAttribute('disabled');
+                            btn.classList.remove('disabled');
+                            console.log('✅ Enhanced button force-enabled via setTimeout');
+                            console.log('   Final disabled state:', btn.disabled);
+                            console.log('   Has disabled attr:', btn.hasAttribute('disabled'));
+                        }
+                    }, 100);
+                    
+                    console.log('✅ Enhanced gender detection button enabled');
+                } else {
+                    console.error('❌ detectGenderEnhancedBtn element is NULL!');
+                }
+
             } catch (error) {
                 console.error('Anti-Aliasing Error:', error);
                 updateAntiAliasingStatus(`❌ Anti-aliasing failed: ${error.message}`, 'alert-danger');
@@ -762,5 +811,161 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         };
     } else {
         console.error('❌ applyAntiAliasingBtn not found - cannot attach event handler!');
+    }
+
+    // Detect Gender on Aliased/Downsampled Audio Button Handler
+    if (detectGenderAliasedBtn) {
+        detectGenderAliasedBtn.onclick = async () => {
+            if (!originalAudioData || !uploadedFile) {
+                updateStatus("⚠️ Please analyze the audio first.", 'alert-warning');
+                return;
+            }
+
+            const downsampledRate = parseInt(resampleSlider.value);
+            detectGenderAliasedBtn.disabled = true;
+            
+            // Show loading indicator
+            aliasedGenderResult.style.display = 'block';
+            document.getElementById('aliased-gender-value').innerHTML = '<div class="spinner-border text-warning" role="status"><span class="visually-hidden">Loading...</span></div>';
+            document.getElementById('aliased-gender-confidence').textContent = 'Analyzing...';
+            document.getElementById('aliased-male-prob').textContent = '-';
+            document.getElementById('aliased-female-prob').textContent = '-';
+            aliasedGenderResult.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            updateStatus(`🎤 Detecting gender on aliased audio (${downsampledRate} Hz)... Please wait.`, 'alert-info');
+
+            try {
+                // Step 1: Downsample audio (aliasing)
+                console.log(`[GENDER_ALIASED] Downsampling from ${currentSampleRate} Hz to ${downsampledRate} Hz`);
+                const aliasedAudio = resampleAudioByDuration(
+                    originalAudioData,
+                    currentSampleRate,
+                    downsampledRate,
+                    originalDuration
+                );
+
+                // Convert aliased audio to WAV
+                const aliasedWavBuffer = audioArrayToWav(aliasedAudio, downsampledRate);
+                const aliasedBlob = new Blob([aliasedWavBuffer], { type: 'audio/wav' });
+                
+                // Create data URI
+                const reader = new FileReader();
+                const aliasedDataURI = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result);
+                    reader.readAsDataURL(aliasedBlob);
+                });
+
+                // Step 2: Detect gender on aliased audio
+                const csrftoken = getCookie('csrftoken');
+                const requestBody = JSON.stringify({
+                    audio_data: aliasedDataURI,
+                    filename: `aliased_${downsampledRate}hz_${uploadedFile.name}`,
+                    target_sample_rate: downsampledRate
+                });
+
+                const response = await fetch('/api/analyze_voices/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: requestBody,
+                });
+
+                if (!response.ok) {
+                    const errorJson = await response.json();
+                    throw new Error(errorJson.error || 'Gender detection failed');
+                }
+
+                const genderData = await response.json();
+
+                // Display aliased gender result
+                document.getElementById('aliased-gender-value').textContent = genderData.predicted_gender;
+                document.getElementById('aliased-gender-confidence').textContent = `${(genderData.confidence * 100).toFixed(1)}%`;
+                document.getElementById('aliased-male-prob').textContent = `${(genderData.male_probability * 100).toFixed(1)}%`;
+                document.getElementById('aliased-female-prob').textContent = `${(genderData.female_probability * 100).toFixed(1)}%`;
+                
+                updateStatus(
+                    `✅ Gender detected on aliased audio (${downsampledRate} Hz): ${genderData.predicted_gender} (${(genderData.confidence * 100).toFixed(1)}%)`,
+                    'alert-success'
+                );
+
+            } catch (error) {
+                console.error('Gender Detection (Aliased) Error:', error);
+                updateStatus(`❌ Gender detection failed: ${error.message}`, 'alert-danger');
+                aliasedGenderResult.style.display = 'none';
+            } finally {
+                detectGenderAliasedBtn.disabled = false;
+            }
+        };
+    }
+
+    // Detect Gender on Enhanced/Anti-Aliased Audio Button Handler
+    if (detectGenderEnhancedBtn) {
+        detectGenderEnhancedBtn.onclick = async () => {
+            if (!enhancedAudioData || !enhancedAudioData.enhanced_audio_b64) {
+                updateStatus("⚠️ Please apply anti-aliasing first.", 'alert-warning');
+                return;
+            }
+
+            detectGenderEnhancedBtn.disabled = true;
+            
+            // Show loading indicator
+            enhancedGenderResult.style.display = 'block';
+            document.getElementById('enhanced-gender-value').innerHTML = '<div class="spinner-border text-info" role="status"><span class="visually-hidden">Loading...</span></div>';
+            document.getElementById('enhanced-gender-confidence').textContent = 'Analyzing...';
+            document.getElementById('enhanced-male-prob').textContent = '-';
+            document.getElementById('enhanced-female-prob').textContent = '-';
+            enhancedGenderResult.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            updateStatus(`🎤 Detecting gender on enhanced audio... Please wait.`, 'alert-info');
+
+            try {
+                // Use the enhanced audio data URI
+                const enhancedDataURI = `data:audio/wav;base64,${enhancedAudioData.enhanced_audio_b64}`;
+
+                // Detect gender on enhanced audio
+                const csrftoken = getCookie('csrftoken');
+                const requestBody = JSON.stringify({
+                    audio_data: enhancedDataURI,
+                    filename: `enhanced_${uploadedFile.name}`,
+                    target_sample_rate: enhancedAudioData.sr
+                });
+
+                const response = await fetch('/api/analyze_voices/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: requestBody,
+                });
+
+                if (!response.ok) {
+                    const errorJson = await response.json();
+                    throw new Error(errorJson.error || 'Gender detection failed');
+                }
+
+                const genderData = await response.json();
+
+                // Display enhanced gender result
+                document.getElementById('enhanced-gender-value').textContent = genderData.predicted_gender;
+                document.getElementById('enhanced-gender-confidence').textContent = `${(genderData.confidence * 100).toFixed(1)}%`;
+                document.getElementById('enhanced-male-prob').textContent = `${(genderData.male_probability * 100).toFixed(1)}%`;
+                document.getElementById('enhanced-female-prob').textContent = `${(genderData.female_probability * 100).toFixed(1)}%`;
+                
+                updateStatus(
+                    `✅ Gender detected on enhanced audio: ${genderData.predicted_gender} (${(genderData.confidence * 100).toFixed(1)}%)`,
+                    'alert-success'
+                );
+
+            } catch (error) {
+                console.error('Gender Detection (Enhanced) Error:', error);
+                updateStatus(`❌ Gender detection failed: ${error.message}`, 'alert-danger');
+                enhancedGenderResult.style.display = 'none';
+            } finally {
+                detectGenderEnhancedBtn.disabled = false;
+            }
+        };
     }
 });
