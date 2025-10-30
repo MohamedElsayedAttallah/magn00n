@@ -29,6 +29,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const detectionResults = document.getElementById('ecg-detection-results');
     const detectionContent = document.getElementById('ecg-detection-content');
 
+    // NEW: Aliased Detection elements
+    const detectAliasedBtn = document.getElementById('ecg-btn-detect-aliased');
+    const aliasedDetectionResults = document.getElementById('ecg-aliased-detection-results');
+    const aliasedDetectionContent = document.getElementById('ecg-aliased-detection-content');
+
     let globalECGData = null;
     let streamInterval = null;
     let currentSignalIndex = 0;
@@ -183,6 +188,9 @@ function handleFiles(files) {
     if (detectionResults) {
         detectionResults.style.display = 'none';
     }
+    if (aliasedDetectionResults) {
+        aliasedDetectionResults.style.display = 'none';
+    }
 
     updateStatus(`Uploading ${datFile.name} and ${heaFile.name} for server conversion...`, 'alert-warning');
 
@@ -325,6 +333,12 @@ function setupControls(data) {
         detectionContainer.style.display = 'block';
         detectBtn.disabled = false;
 
+        // Enable aliased detection button (works with any frequency when aliased to 100Hz)
+        if (detectAliasedBtn) {
+            detectAliasedBtn.disabled = false;
+            console.log('[ECG SETUP] ✅ Aliased detection button enabled');
+        }
+
         // Update status message
         setTimeout(() => {
             updateStatus(
@@ -341,11 +355,17 @@ function setupControls(data) {
         detectionContainer.style.display = 'none';
         detectionResults.style.display = 'none';
 
+        // Enable aliased detection button (can downsample to 100Hz)
+        if (detectAliasedBtn) {
+            detectAliasedBtn.disabled = false;
+            console.log('[ECG SETUP] ✅ Aliased detection button enabled (will downsample to 100Hz)');
+        }
+
         // Update status message
         setTimeout(() => {
             updateStatus(
                 `✅ ECG loaded successfully (${data.fs}Hz, ${data.channel_names.length} channels). ` +
-                `<small>Note: Abnormality detection only works with 100Hz PTB-XL signals.</small>`,
+                `<small>Tip: Use the aliased detection button to analyze downsampled signals.</small>`,
                 'alert-info'
             );
         }, 800);
@@ -476,6 +496,171 @@ function setupControls(data) {
 
         detectionResults.style.display = 'block';
         updateStatus(`✅ Detection complete: ${prediction.predicted_class}`, isNormal ? 'alert-success' : 'alert-warning');
+    }
+
+    // NEW: Aliased Detection Button Handler
+    if (detectAliasedBtn) {
+        detectAliasedBtn.onclick = async function() {
+            if (!globalECGData) {
+                updateStatus('⚠️ No ECG data loaded.', 'alert-warning');
+                return;
+            }
+
+            const simulatedFs = parseFloat(nyquistSlider.value);
+            
+            if (simulatedFs === globalECGData.fs) {
+                updateStatus('⚠️ Please adjust the sampling frequency slider to create an aliased signal.', 'alert-warning');
+                return;
+            }
+
+            detectAliasedBtn.disabled = true;
+            detectAliasedBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing Aliased Signal...';
+            
+            // Show loading state
+            aliasedDetectionResults.style.display = 'block';
+            aliasedDetectionContent.innerHTML = '<div class="text-center"><i class="fas fa-spinner fa-spin fa-3x" style="color: #f78166;"></i><p class="mt-3">Analyzing aliased signal...</p></div>';
+            
+            // Scroll to results after a short delay to ensure render
+            setTimeout(() => {
+                aliasedDetectionResults.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 100);
+
+            try {
+                // Step 1: Downsample all channels to the simulated frequency (aliasing effect)
+                console.log(`[ECG ALIASED] Step 1: Downsampling from ${globalECGData.fs}Hz to ${simulatedFs}Hz (aliasing)`);
+                const aliasedSignals = globalECGData.signals.map(signal => 
+                    resampleSignal(signal, globalECGData.fs, simulatedFs)
+                );
+
+                // Step 2: Resample the aliased signal to 100Hz for model compatibility
+                console.log(`[ECG ALIASED] Step 2: Resampling aliased signal from ${simulatedFs}Hz to 100Hz for model`);
+                const finalSignals = aliasedSignals.map(signal => 
+                    resampleSignal(signal, simulatedFs, 100)
+                );
+
+                const csrftoken = getCookie('csrftoken');
+
+                const response = await fetch('/api/detect_ecg/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: JSON.stringify({
+                        signals: finalSignals,
+                        fs: 100,  // Always 100Hz for model
+                        channel_names: globalECGData.channel_names
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Aliased detection failed');
+                }
+
+                displayAliasedDetectionResults(result, simulatedFs);
+
+            } catch (error) {
+                console.error('[ECG Aliased Detection Error]', error);
+                updateStatus(`❌ Aliased detection failed: ${error.message}`, 'alert-danger');
+                aliasedDetectionResults.style.display = 'none';
+            } finally {
+                detectAliasedBtn.disabled = false;
+                detectAliasedBtn.innerHTML = '<i class="fas fa-heartbeat"></i> Detect Abnormality (Aliased)';
+            }
+        };
+    }
+
+    // NEW: Display Aliased Detection Results
+    function displayAliasedDetectionResults(result, aliasedFs) {
+        const prediction = result.prediction;
+        const isNormal = prediction.is_normal;
+
+        const resultClass = isNormal ? 'detection-result-normal' : 'detection-result-abnormal';
+        const statusIcon = isNormal ? '✅' : '⚠️';
+        const statusText = isNormal ? 'NORMAL' : 'ABNORMALITY DETECTED';
+        const statusColor = isNormal ? '#28a745' : '#dc3545';
+        const nyquistLimit = (aliasedFs / 2).toFixed(1);
+
+        // Build probability bars
+        let probabilityHTML = '';
+        for (const [className, prob] of Object.entries(prediction.probabilities)) {
+            const percentage = (prob * 100).toFixed(1);
+            const isHighlighted = className === prediction.predicted_class;
+
+            probabilityHTML += `
+                <div class="mb-2">
+                    <div class="probability-bar">
+                        <span class="probability-label">${className}</span>
+                        <div class="probability-fill" style="width: ${percentage}%; ${isHighlighted ? 'background: linear-gradient(90deg, #f78166, #ff6347);' : ''}">
+                            <span style="color: white; font-size: 12px; font-weight: 600;">${percentage}%</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        aliasedDetectionContent.innerHTML = `
+            <div class="${resultClass}">
+                <h4 style="color: ${statusColor}; margin-bottom: 15px;">
+                    ${statusIcon} ${statusText}
+                </h4>
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #c9d1d9;">Classification:</strong> 
+                    <span style="color: ${statusColor}; font-weight: 600; font-size: 1.1em;">
+                        ${prediction.predicted_class}
+                    </span>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #c9d1d9;">Description:</strong> 
+                    <span style="color: #8b949e;">${prediction.description}</span>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #c9d1d9;">Confidence:</strong> 
+                    <span style="color: #f78166; font-weight: 600;">
+                        ${(prediction.confidence * 100).toFixed(1)}%
+                    </span>
+                </div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <h6 style="color: #c9d1d9; margin-bottom: 10px;">
+                    <i class="fas fa-chart-bar"></i> Class Probabilities
+                </h6>
+                ${probabilityHTML}
+            </div>
+
+            <div style="margin-top: 15px; padding: 10px; background-color: #0d1117; border-radius: 5px; border-left: 3px solid #f78166;">
+                <div style="color: #f78166; margin-bottom: 10px;">
+                    <strong><i class="fas fa-signal"></i> Aliased Signal Info:</strong>
+                </div>
+                <div style="color: #8b949e;">
+                    <strong>Downsampled Frequency:</strong> ${aliasedFs} Hz<br>
+                    <strong>Nyquist Limit:</strong> ${nyquistLimit} Hz<br>
+                    <strong>Channels:</strong> ${result.signal_info.num_channels}<br>
+                    <strong>Duration:</strong> ${result.signal_info.duration_sec.toFixed(2)}s<br>
+                    <strong>Original Frequency:</strong> ${globalECGData.fs} Hz
+                </div>
+            </div>
+        `;
+
+        // Force display multiple ways to ensure it stays visible
+        aliasedDetectionResults.removeAttribute('style');
+        aliasedDetectionResults.setAttribute('style', 'display: block !important; background-color: #161b22; border: 3px solid #f78166; position: relative; z-index: 1000;');
+        aliasedDetectionResults.style.display = 'block';
+        aliasedDetectionResults.classList.add('show-result');
+        
+        console.log('[ECG ALIASED] Results displayed, card visibility:', aliasedDetectionResults.style.display);
+        console.log('[ECG ALIASED] Card HTML populated with', aliasedDetectionContent.innerHTML.length, 'characters');
+        
+        // Force scroll to results
+        setTimeout(() => {
+            aliasedDetectionResults.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            console.log('[ECG ALIASED] Scrolled to results card');
+        }, 200);
+        
+        updateStatus(`✅ Aliased detection complete (${aliasedFs}Hz): ${prediction.predicted_class}`, isNormal ? 'alert-success' : 'alert-warning');
     }
 
     // Core Streaming Controls
