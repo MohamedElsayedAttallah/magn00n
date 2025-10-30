@@ -32,7 +32,7 @@
                 <i class="fas fa-play"></i> ▶ Play
             </button>
             <button id="ecg-btn-pause" class="btn btn-warning flex-fill me-2" disabled>
-                <i class="fas fa-pause"></i> ⏸ Pause
+                <i class="fas fa-pause"></i> ⸗ Pause
             </button>
             <button id="ecg-btn-reset" class="btn btn-danger flex-fill" disabled>
                 Reset (New Fs)
@@ -44,6 +44,30 @@
             <input type="range" class="form-range" min="1" max="10" step="0.5" value="5" id="ecg-time-slider">
         </div>
     </div>
+
+     <!-- Replace the detection section and style in your ecg.html with this -->
+
+<!-- Detection Button Container (initially hidden) -->
+<div id="ecg-detection-container" class="text-center mb-4" style="display: none;">
+    <button id="ecg-btn-detect" class="btn btn-primary btn-lg" style="min-width: 200px;" disabled>
+        <i class="fas fa-heartbeat"></i> Detect Abnormality
+    </button>
+    <p class="text-muted mt-2 mb-0">
+        <small>Uses PTB-XL trained model (100Hz only)</small>
+    </p>
+</div>
+
+<!-- Detection Results Card -->
+<div id="ecg-detection-results" class="card mb-4" style="display: none; background-color: #161b22; border: 1px solid #30363d;">
+    <div class="card-body">
+        <h5 class="card-title" style="color: #58a6ff;">
+            <i class="fas fa-chart-line"></i> Detection Results
+        </h5>
+        <div id="ecg-detection-content">
+            <!-- Results will be populated here -->
+        </div>
+    </div>
+</div>
 
     <div id="ecg-nyquist-slider-container" class="mb-4" style="display: none;">
         <label for="ecg-nyquist-slider" class="form-label">Simulated Sampling FS ($f_s$): <span id="nyquist-fs-output">500</span> Hz (Nyquist Limit: <span id="max-freq-output">250</span> Hz)</label>
@@ -69,6 +93,7 @@
     </div>
 </div>
 
+
 <style>
     /* Styling for the mode buttons */
     .btn-mode {
@@ -85,6 +110,63 @@
         border-color: #58a6ff;
         color: white;
         box-shadow: 0 0 8px rgba(88, 166, 255, 0.5);
+    }
+
+    /* Detection button styling */
+    #ecg-btn-detect {
+        background: linear-gradient(135deg, #58a6ff 0%, #1f6feb 100%);
+        border: none;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    #ecg-btn-detect:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(88, 166, 255, 0.4);
+    }
+    #ecg-btn-detect:disabled {
+        background: #30363d;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    /* Detection results styling */
+    .detection-result-normal {
+        background-color: rgba(40, 167, 69, 0.1);
+        border-left: 4px solid #28a745;
+        padding: 15px;
+        border-radius: 5px;
+    }
+    .detection-result-abnormal {
+        background-color: rgba(220, 53, 69, 0.1);
+        border-left: 4px solid #dc3545;
+        padding: 15px;
+        border-radius: 5px;
+    }
+    .probability-bar {
+        height: 25px;
+        background-color: #30363d;
+        border-radius: 5px;
+        overflow: hidden;
+        position: relative;
+        margin: 5px 0;
+    }
+    .probability-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #58a6ff, #1f6feb);
+        transition: width 0.5s ease;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding-right: 10px;
+    }
+    .probability-label {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-weight: 600;
+        color: #c9d1d9;
+        z-index: 1;
     }
 </style>
 {% endblock %}

@@ -25,7 +25,40 @@ from scipy.signal import resample_poly
 
 # Import utility modules
 from .anti_aliasing_utils import AudioAntiAliaser, audio_array_to_wav_bytes
+# Add this import at the top of views.py with other imports
+# Replace the ECG detection import section in views.py with this:
 
+# ECG Classification imports (TensorFlow/Keras)
+try:
+    import tensorflow as tf
+    from .ecg_classification_utils import (
+        load_ecg_model,
+        predict_ecg_abnormality,
+        get_class_description,
+        CLASS_NAMES as ECG_CLASS_NAMES
+    )
+
+    TENSORFLOW_AVAILABLE = True
+    print("✅ TensorFlow loaded for ECG classification")
+except ImportError as e:
+    print(f"⚠️ Warning: TensorFlow not available for ECG detection: {e}")
+    TENSORFLOW_AVAILABLE = False
+
+
+    # Stub functions
+    def load_ecg_model(*args, **kwargs):
+        raise NotImplementedError("TensorFlow not installed.")
+
+
+    def predict_ecg_abnormality(*args, **kwargs):
+        raise NotImplementedError("TensorFlow not installed.")
+
+
+    def get_class_description(*args, **kwargs):
+        return "TensorFlow not available"
+
+
+    ECG_CLASS_NAMES = []
 # Conditional ML library imports
 try:
     import librosa
@@ -71,7 +104,8 @@ MAX_FILE_SIZE_MB = 10
 BASE_DIR = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(BASE_DIR, 'assets', 'drone_bird_detection', 'yamnet_finetuned.h5')
 ANTI_ALIASING_MODEL_PATH = os.path.join(BASE_DIR, 'assets', 'anti_aliasing', 'best_modell.pth')
-
+# Add this constant with other MODEL_PATH constants
+ECG_MODEL_PATH = os.path.join(BASE_DIR, 'assets', 'ecg_model', 'model02.keras')
 # Classification class names
 CLASS_NAMES = ['Drone', 'Bird', 'Noise/Other']
 
@@ -1507,3 +1541,131 @@ def predict_car_speed(request):
                 print(f"[SPEED_CNN14] Cleaned up temporary file")
             except Exception as e:
                 print(f"[SPEED_CNN14] Cleanup warning: {e}")
+
+
+@csrf_exempt
+def detect_ecg_abnormality(request):
+    """
+    Detect ECG abnormalities using pretrained Keras model.
+    Only works with 100Hz ECG signals from PTB-XL dataset.
+    """
+    # Validate request
+    if request.method != 'POST':
+        return HttpResponseBadRequest("Invalid request method.")
+
+    # Check TensorFlow availability
+    if not TENSORFLOW_AVAILABLE:
+        return JsonResponse({
+            "error": "TensorFlow is not installed.",
+            "solution": "Install TensorFlow: pip install tensorflow"
+        }, status=500)
+
+    try:
+        # Parse request body
+        data = json.loads(request.body)
+        signals = data.get('signals')  # List of lists: [[ch1_samples], [ch2_samples], ...]
+        fs = data.get('fs')
+        channel_names = data.get('channel_names', [])
+
+        if not signals or not fs:
+            return JsonResponse({
+                "error": "Missing signals or sampling frequency."
+            }, status=400)
+
+        print(f"[ECG_DETECT] Received signal with fs={fs}Hz, channels={len(signals)}")
+
+        # Validate sampling frequency (must be 100Hz for PTB-XL model)
+        if fs != 100:
+            return JsonResponse({
+                "error": f"Model only supports 100Hz signals. Received {fs}Hz.",
+                "suggestion": "Please upload 100Hz ECG records from PTB-XL dataset."
+            }, status=400)
+
+        # Convert to numpy array
+        signals_np = np.array(signals, dtype=np.float32)
+
+        # Validate signal shape
+        num_channels, num_samples = signals_np.shape
+        print(f"[ECG_DETECT] Signal shape: {signals_np.shape}")
+
+        if num_channels < 12:
+            return JsonResponse({
+                "error": f"Model requires 12-lead ECG. Received {num_channels} channels.",
+                "available_channels": channel_names
+            }, status=400)
+
+        # Use only first 12 channels if more are available
+        if num_channels > 12:
+            signals_np = signals_np[:12, :]
+            print(f"[ECG_DETECT] Using first 12 channels")
+
+        # Check if model exists
+        if not os.path.exists(ECG_MODEL_PATH):
+            return JsonResponse({
+                "error": "ECG classification model not found.",
+                "model_path": ECG_MODEL_PATH,
+                "solution": "Please place your trained PTB-XL Keras model at signal_viewer_app/assets/ecg_model/model02.keras"
+            }, status=500)
+
+        # Load model (TensorFlow/Keras)
+        try:
+            print(f"[ECG_DETECT] Loading Keras model from: {ECG_MODEL_PATH}")
+            model = load_ecg_model(ECG_MODEL_PATH, device='cpu', num_classes=5, input_channels=12)
+            print("[ECG_DETECT] ✅ Model loaded successfully")
+
+        except Exception as model_error:
+            error_trace = traceback.format_exc()
+            print(f"[ECG_DETECT] Model loading error:\n{error_trace}")
+            return JsonResponse({
+                "error": f"Failed to load ECG model: {str(model_error)}",
+                "model_path": ECG_MODEL_PATH,
+                "model_type": "Keras (.keras format)",
+                "traceback": error_trace
+            }, status=500)
+
+        # Run prediction
+        try:
+            print("[ECG_DETECT] Running prediction...")
+            prediction = predict_ecg_abnormality(model, signals_np, device='cpu')
+
+            print(f"[ECG_DETECT] ✅ Prediction: {prediction['predicted_class']} "
+                  f"({'Normal' if prediction['is_normal'] else 'Abnormal'}, "
+                  f"{prediction['confidence']:.2%} confidence)")
+
+            response_data = {
+                "success": True,
+                "prediction": prediction,
+                "signal_info": {
+                    "fs": fs,
+                    "num_channels": num_channels,
+                    "num_samples": num_samples,
+                    "duration_sec": float(num_samples / fs)
+                },
+                "model_info": {
+                    "type": "TensorFlow/Keras",
+                    "class_names": ECG_CLASS_NAMES
+                }
+            }
+
+            return JsonResponse(response_data)
+
+        except Exception as pred_error:
+            error_trace = traceback.format_exc()
+            print(f"[ECG_DETECT] Prediction error:\n{error_trace}")
+            return JsonResponse({
+                "error": f"Prediction failed: {str(pred_error)}",
+                "traceback": error_trace
+            }, status=500)
+
+    except json.JSONDecodeError as e:
+        return JsonResponse({
+            "error": f"Invalid JSON in request body: {str(e)}"
+        }, status=400)
+
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        print(f"[ECG_DETECT] ❌ Error:\n{error_trace}")
+        return JsonResponse({
+            "error": f"ECG detection failed: {str(e)}",
+            "traceback": error_trace
+        }, status=500)

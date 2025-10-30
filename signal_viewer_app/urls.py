@@ -41,4 +41,5 @@ urlpatterns = [
 
     # NEW: Path for Speed Prediction
     path('api/predict_speed/', views.predict_car_speed, name='api_predict_speed'),
+    path('api/detect_ecg/', views.detect_ecg_abnormality, name='api_detect_ecg'),
 ]

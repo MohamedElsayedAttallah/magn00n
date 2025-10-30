@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const pairChSelect = document.getElementById('ecg-pair-ch');
     const playBtn = document.getElementById('ecg-btn-play');
     const pauseBtn = document.getElementById('ecg-btn-pause');
-    const resetBtn = document.getElementById('ecg-btn-reset'); // Reset Button
+    const resetBtn = document.getElementById('ecg-btn-reset');
 
     const timeSliderContainer = document.getElementById('ecg-time-slider-container');
     const timeSlider = document.getElementById('ecg-time-slider');
@@ -23,6 +23,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const plotTitleH5 = document.getElementById('current-plot-title');
     const linearTimeWindow = document.getElementById('linear-time-window');
 
+    // NEW: Detection elements
+    const detectionContainer = document.getElementById('ecg-detection-container');
+    const detectBtn = document.getElementById('ecg-btn-detect');
+    const detectionResults = document.getElementById('ecg-detection-results');
+    const detectionContent = document.getElementById('ecg-detection-content');
 
     let globalECGData = null;
     let streamInterval = null;
@@ -33,7 +38,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const STEP_SEC = 0.2;
     const INTERVAL_MS = STEP_SEC * 1000;
 
-    // Helper to get CSRF token (required for Django POST requests)
+    // Helper to get CSRF token
     function getCookie(name) {
         let cookieValue = null;
         if (document.cookie && document.cookie !== '') {
@@ -49,7 +54,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return cookieValue;
     }
 
-    // --- Signal Processing Utilities (Unchanged) ---
+    // Signal Processing Utilities
     function resampleSignal(signal, actualFs, simulatedFs) {
         if (simulatedFs >= actualFs) {
             return signal;
@@ -134,7 +139,7 @@ document.addEventListener('DOMContentLoaded', function() {
         statusDiv.innerHTML = message;
     }
 
-    // --- Drag and Drop and API Call Handlers (Unchanged) ---
+    // Drag and Drop
     if (dropZone && fileInput) {
         dropZone.addEventListener('click', () => { fileInput.click(); });
     }
@@ -155,131 +160,325 @@ document.addEventListener('DOMContentLoaded', function() {
             fileInput.value = '';
         };
     }
+// Replace the entire handleFiles function and setupControls function in ecg_logic.js
 
-    function handleFiles(files) {
-        if (files.length < 2) {
-            updateStatus("⚠️ Please drag and drop both the .dat and .hea files.", 'alert-danger');
-            return;
+function handleFiles(files) {
+    if (files.length < 2) {
+        updateStatus("⚠️ Please drag and drop both the .dat and .hea files.", 'alert-danger');
+        return;
+    }
+
+    const datFile = files.find(f => f.name.endsWith('.dat'));
+    const heaFile = files.find(f => f.name.endsWith('.hea'));
+
+    if (!datFile || !heaFile) {
+        updateStatus("⚠️ Could not find both .dat and .hea files. Both are required.", 'alert-danger');
+        return;
+    }
+
+    // Hide detection elements when new file is uploaded
+    if (detectionContainer) {
+        detectionContainer.style.display = 'none';
+    }
+    if (detectionResults) {
+        detectionResults.style.display = 'none';
+    }
+
+    updateStatus(`Uploading ${datFile.name} and ${heaFile.name} for server conversion...`, 'alert-warning');
+
+    const formData = new FormData();
+    formData.append('dat_file', datFile);
+    formData.append('hea_file', heaFile);
+
+    const csrftoken = getCookie('csrftoken');
+
+    fetch('/api/convert_ecg/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrftoken },
+        body: formData,
+    })
+    .then(async response => {
+        if (response.ok) {
+            return response.json();
+        } else {
+            const errorText = await response.text();
+            throw new Error(`Server responded with status ${response.status}. Response content: ${errorText.substring(0, 500)}`);
         }
+    })
+    .then(data => {
+        if (data.error) throw new Error(data.error);
 
-        const datFile = files.find(f => f.name.endsWith('.dat'));
-        const heaFile = files.find(f => f.name.endsWith('.hea'));
+        console.log('[ECG] ========== FILE UPLOAD SUCCESS ==========');
+        console.log('[ECG] Filename:', data.filename);
+        console.log('[ECG] Sampling Frequency (fs):', data.fs, 'Hz');
+        console.log('[ECG] Channels:', data.channel_names);
+        console.log('[ECG] Duration:', data.duration, 'seconds');
+        console.log('[ECG] ==========================================');
 
-        if (!datFile || !heaFile) {
-            updateStatus("⚠️ Could not find both .dat and .hea files. Both are required.", 'alert-danger');
-            return;
-        }
+        globalECGData = data;
 
-        updateStatus(`Uploading ${datFile.name} and ${heaFile.name} for server conversion...`, 'alert-warning');
+        updateStatus(`✅ ECG Record loaded (${data.fs}Hz). Initializing controls...`, 'alert-success');
 
-        const formData = new FormData();
-        formData.append('dat_file', datFile);
-        formData.append('hea_file', heaFile);
+        // Setup controls (this will handle button visibility)
+        setupControls(data);
 
-        const csrftoken = getCookie('csrftoken');
+        initializePlot(data);
+        currentSignalIndex = 0;
+        playSignal();
 
-        fetch('/api/convert_ecg/', {
-            method: 'POST',
-            headers: { 'X-CSRFToken': csrftoken },
-            body: formData,
-        })
-        .then(async response => {
-            if (response.ok) {
-                return response.json();
-            } else {
-                const errorText = await response.text();
-                throw new Error(`Server responded with status ${response.status}. Response content: ${errorText.substring(0, 500)}`);
+    })
+    .catch(error => {
+        console.error('Conversion Error:', error);
+        updateStatus(`❌ Conversion Failed. Check console for details. Error message: ${error.message}`, 'alert-danger');
+        pauseSignal();
+    });
+}
+
+function setupControls(data) {
+    console.log('\n[ECG SETUP] ========== SETTING UP CONTROLS ==========');
+    console.log('[ECG SETUP] Received fs:', data.fs, 'Hz');
+
+    primaryChSelect.innerHTML = '';
+    pairChSelect.innerHTML = '';
+    data.channel_names.forEach((name, index) => {
+        const option = `<option value="${index}">${name}</option>`;
+        primaryChSelect.innerHTML += option;
+        pairChSelect.innerHTML += option;
+    });
+
+    if (primaryChSelect.options.length > 0) primaryChSelect.options[0].selected = true;
+    pairChSelect.value = data.channel_names.length > 1 ? 1 : 0;
+
+    controlsDiv.style.display = 'flex';
+    if (timeSliderContainer) timeSliderContainer.style.display = 'block';
+    if (nyquistSliderContainer) nyquistSliderContainer.style.display = 'block';
+    if (modeButtonsDiv) modeButtonsDiv.style.display = 'block';
+
+    playBtn.disabled = false;
+    pauseBtn.disabled = false;
+    if (resetBtn) resetBtn.disabled = false;
+
+    primaryChSelect.onchange = () => updatePlots(false);
+    pairChSelect.onchange = () => updatePlots(false);
+
+    if (timeSlider && windowSizeOutput) {
+        timeSlider.oninput = () => {
+            windowSizeOutput.textContent = parseFloat(timeSlider.value).toFixed(1);
+            updatePlots(false);
+        };
+    }
+
+    // Nyquist Slider
+    const maxFs = data.fs;
+    const initialSliderFs = Math.min(500, maxFs);
+    const maxNyquist = Math.floor(initialSliderFs / 2);
+
+    nyquistSlider.max = maxFs;
+    nyquistSlider.value = initialSliderFs;
+
+    if (nyquistFsOutput) nyquistFsOutput.textContent = initialSliderFs.toFixed(0);
+    if (maxFreqOutput) maxFreqOutput.textContent = maxNyquist.toFixed(0);
+
+    if (nyquistSlider) {
+        nyquistSlider.oninput = () => {
+            const simulatedFs = parseFloat(nyquistSlider.value);
+            const nyquistLimit = Math.floor(simulatedFs / 2);
+
+            nyquistFsOutput.textContent = simulatedFs.toFixed(0);
+            maxFreqOutput.textContent = nyquistLimit.toFixed(0);
+        };
+    }
+
+    if (resetBtn) {
+        resetBtn.onclick = resetSignal;
+    }
+
+    document.querySelectorAll('.btn-mode').forEach(button => {
+        button.onclick = (e) => {
+            document.querySelectorAll('.btn-mode').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+            currentVisualizationMode = e.target.getAttribute('data-mode');
+            updatePlots(false);
+        };
+    });
+
+    // ========== DETECTION BUTTON LOGIC ==========
+    console.log('[ECG SETUP] Checking detection button eligibility...');
+    console.log('[ECG SETUP] Detection container exists:', !!detectionContainer);
+    console.log('[ECG SETUP] Detection button exists:', !!detectBtn);
+
+    if (!detectionContainer || !detectBtn) {
+        console.error('[ECG SETUP] ❌ Detection elements not found in DOM!');
+        console.log('[ECG SETUP] ==========================================\n');
+        return;
+    }
+
+    // Check if sampling frequency is exactly 100Hz
+    const is100Hz = (data.fs === 100);
+
+    console.log('[ECG SETUP] Is 100Hz signal?', is100Hz);
+
+    if (is100Hz) {
+        // SHOW the detection button
+        console.log('[ECG SETUP] ✅ SHOWING detection button (100Hz signal detected)');
+
+        detectionContainer.style.display = 'block';
+        detectBtn.disabled = false;
+
+        // Update status message
+        setTimeout(() => {
+            updateStatus(
+                `✅ ECG loaded successfully (${data.fs}Hz, ${data.channel_names.length} channels). ` +
+                `<strong>Abnormality detection available!</strong>`,
+                'alert-success'
+            );
+        }, 800);
+
+    } else {
+        // HIDE the detection button
+        console.log(`[ECG SETUP] ⚠️ HIDING detection button (${data.fs}Hz signal - requires 100Hz)`);
+
+        detectionContainer.style.display = 'none';
+        detectionResults.style.display = 'none';
+
+        // Update status message
+        setTimeout(() => {
+            updateStatus(
+                `✅ ECG loaded successfully (${data.fs}Hz, ${data.channel_names.length} channels). ` +
+                `<small>Note: Abnormality detection only works with 100Hz PTB-XL signals.</small>`,
+                'alert-info'
+            );
+        }, 800);
+    }
+
+    console.log('[ECG SETUP] Detection container display:', detectionContainer.style.display);
+    console.log('[ECG SETUP] Detection button disabled:', detectBtn.disabled);
+    console.log('[ECG SETUP] ==========================================\n');
+}
+
+    // Setup UI Controls
+   // Replace the setupControls function in ecg_logic.js with this improved version
+
+    // NEW: Detection Button Handler
+    if (detectBtn) {
+        detectBtn.onclick = async function() {
+            if (!globalECGData) {
+                updateStatus('⚠️ No ECG data loaded.', 'alert-warning');
+                return;
             }
-        })
-        .then(data => {
-            if (data.error) throw new Error(data.error);
 
-            globalECGData = data;
+            detectBtn.disabled = true;
+            detectBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing...';
+            detectionResults.style.display = 'none';
 
-            updateStatus(`✅ ECG Record loaded. Initializing controls...`, 'alert-success');
-            setupControls(data);
+            try {
+                const csrftoken = getCookie('csrftoken');
 
-            initializePlot(data);
-            currentSignalIndex = 0;
-            playSignal();
+                const response = await fetch('/api/detect_ecg/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: JSON.stringify({
+                        signals: globalECGData.signals,
+                        fs: globalECGData.fs,
+                        channel_names: globalECGData.channel_names
+                    })
+                });
 
-        })
-        .catch(error => {
-            console.error('Conversion Error:', error);
-            updateStatus(`❌ Conversion Failed. Check console for details. Error message: ${error.message}`, 'alert-danger');
-            pauseSignal();
-        });
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Detection failed');
+                }
+
+                displayDetectionResults(result);
+
+            } catch (error) {
+                console.error('[ECG Detection Error]', error);
+                updateStatus(`❌ Detection failed: ${error.message}`, 'alert-danger');
+                detectionResults.style.display = 'none';
+            } finally {
+                detectBtn.disabled = false;
+                detectBtn.innerHTML = '<i class="fas fa-heartbeat"></i> Detect Abnormality';
+            }
+        };
     }
 
-    // --- Setup UI Controls and Streaming Controls ---
-    function setupControls(data) {
-        primaryChSelect.innerHTML = '';
-        pairChSelect.innerHTML = '';
-        data.channel_names.forEach((name, index) => {
-            const option = `<option value="${index}">${name}</option>`;
-            primaryChSelect.innerHTML += option;
-            pairChSelect.innerHTML += option;
-        });
+    // NEW: Display Detection Results
+    function displayDetectionResults(result) {
+        const prediction = result.prediction;
+        const isNormal = prediction.is_normal;
 
-        if (primaryChSelect.options.length > 0) primaryChSelect.options[0].selected = true;
-        pairChSelect.value = data.channel_names.length > 1 ? 1 : 0;
+        const resultClass = isNormal ? 'detection-result-normal' : 'detection-result-abnormal';
+        const statusIcon = isNormal ? '✅' : '⚠️';
+        const statusText = isNormal ? 'NORMAL' : 'ABNORMALITY DETECTED';
+        const statusColor = isNormal ? '#28a745' : '#dc3545';
 
-        controlsDiv.style.display = 'flex';
-        if (timeSliderContainer) timeSliderContainer.style.display = 'block';
-        if (nyquistSliderContainer) nyquistSliderContainer.style.display = 'block';
-        if (modeButtonsDiv) modeButtonsDiv.style.display = 'block';
+        // Build probability bars
+        let probabilityHTML = '';
+        for (const [className, prob] of Object.entries(prediction.probabilities)) {
+            const percentage = (prob * 100).toFixed(1);
+            const isHighlighted = className === prediction.predicted_class;
 
-        playBtn.disabled = false;
-        pauseBtn.disabled = false;
-        if (resetBtn) resetBtn.disabled = false;
-
-        primaryChSelect.onchange = () => updatePlots(false);
-        pairChSelect.onchange = () => updatePlots(false);
-
-        if (timeSlider && windowSizeOutput) {
-            timeSlider.oninput = () => {
-                windowSizeOutput.textContent = parseFloat(timeSlider.value).toFixed(1);
-                updatePlots(false);
-            };
+            probabilityHTML += `
+                <div class="mb-2">
+                    <div class="probability-bar">
+                        <span class="probability-label">${className}</span>
+                        <div class="probability-fill" style="width: ${percentage}%; ${isHighlighted ? 'background: linear-gradient(90deg, #28a745, #20c997);' : ''}">
+                            <span style="color: white; font-size: 12px; font-weight: 600;">${percentage}%</span>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
-        // --- Nyquist Slider Controls ---
-        const maxFs = data.fs;
-        const initialSliderFs = Math.min(500, maxFs);
-        const maxNyquist = Math.floor(initialSliderFs / 2);
+        detectionContent.innerHTML = `
+            <div class="${resultClass}">
+                <h4 style="color: ${statusColor}; margin-bottom: 15px;">
+                    ${statusIcon} ${statusText}
+                </h4>
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #c9d1d9;">Classification:</strong> 
+                    <span style="color: ${statusColor}; font-weight: 600; font-size: 1.1em;">
+                        ${prediction.predicted_class}
+                    </span>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #c9d1d9;">Description:</strong> 
+                    <span style="color: #8b949e;">${prediction.description}</span>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #c9d1d9;">Confidence:</strong> 
+                    <span style="color: #58a6ff; font-weight: 600;">
+                        ${(prediction.confidence * 100).toFixed(1)}%
+                    </span>
+                </div>
+            </div>
 
-        nyquistSlider.max = maxFs;
-        nyquistSlider.value = initialSliderFs;
+            <div style="margin-top: 20px;">
+                <h6 style="color: #c9d1d9; margin-bottom: 10px;">
+                    <i class="fas fa-chart-bar"></i> Class Probabilities
+                </h6>
+                ${probabilityHTML}
+            </div>
 
-        if (nyquistFsOutput) nyquistFsOutput.textContent = initialSliderFs.toFixed(0);
-        if (maxFreqOutput) maxFreqOutput.textContent = maxNyquist.toFixed(0);
+            <div style="margin-top: 15px; padding: 10px; background-color: #0d1117; border-radius: 5px;">
+                <small style="color: #8b949e;">
+                    <strong>Signal Info:</strong> 
+                    ${result.signal_info.num_channels} channels, 
+                    ${result.signal_info.fs}Hz, 
+                    ${result.signal_info.duration_sec.toFixed(2)}s duration
+                </small>
+            </div>
+        `;
 
-        if (nyquistSlider) {
-            nyquistSlider.oninput = () => {
-                const simulatedFs = parseFloat(nyquistSlider.value);
-                const nyquistLimit = Math.floor(simulatedFs / 2);
-
-                nyquistFsOutput.textContent = simulatedFs.toFixed(0);
-                maxFreqOutput.textContent = nyquistLimit.toFixed(0);
-            };
-        }
-
-        if (resetBtn) {
-            resetBtn.onclick = resetSignal;
-        }
-
-        document.querySelectorAll('.btn-mode').forEach(button => {
-            button.onclick = (e) => {
-                document.querySelectorAll('.btn-mode').forEach(btn => btn.classList.remove('active'));
-                e.target.classList.add('active');
-                currentVisualizationMode = e.target.getAttribute('data-mode');
-                updatePlots(false);
-            };
-        });
+        detectionResults.style.display = 'block';
+        updateStatus(`✅ Detection complete: ${prediction.predicted_class}`, isNormal ? 'alert-success' : 'alert-warning');
     }
 
-    // --- Core Streaming Controls ---
-
+    // Core Streaming Controls
     function resetSignal() {
         if (!globalECGData) return;
 
@@ -323,7 +522,7 @@ document.addEventListener('DOMContentLoaded', function() {
         Plotly.newPlot(plotContainer, [], {...baseLayout, title: 'Loading...', height: 450 });
     }
 
-    // --- Optimization Helper Function ---
+    // Optimization Helper Function
     function getResampledDataForChannel(chIndex, currentWindowSec) {
         const { fs, signals } = globalECGData;
         const currentSimulatedFs = parseFloat(nyquistSlider.value);
@@ -335,8 +534,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return resampleSignal(getFilteredSignal(chIndex), fs, currentSimulatedFs);
     }
 
-
-    // --- Main Plotting Logic ---
+    // Main Plotting Logic
     function updatePlots(advanceTime = true) {
         if (!globalECGData) return;
 
@@ -373,8 +571,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const numSamples = sigA_resampled.length;
         const timeAxis_resampled = Array.from({ length: numSamples }, (_, i) => s_sec + (i / simulatedFs));
 
-
-        // --- Console Output ---
         if (advanceTime) {
             const nyquistLimit = simulatedFs / 2;
             console.log(`\n--- ECG Plotting Window ---`);
@@ -390,8 +586,7 @@ document.addEventListener('DOMContentLoaded', function() {
         let layoutUpdates = {};
         let plotTitle = '';
 
-        // --- DYNAMIC VISUALIZATION LOGIC ---
-
+        // Visualization Logic
         if (currentVisualizationMode === 'linear') {
             plotTitle = `1. Linear Waveform (Fs: ${simulatedFs.toFixed(0)} Hz, Samples: ${numSamples})`;
 
@@ -439,7 +634,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (plotTitleH5) plotTitleH5.textContent = plotTitle;
         }
 
-        // --- RENDER THE SELECTED PLOT ---
+        // Render Plot
         const finalLayout = {
             title: plotTitle,
             plot_bgcolor: '#0d1117',
@@ -451,9 +646,80 @@ document.addEventListener('DOMContentLoaded', function() {
 
         Plotly.react(plotContainer, traces, finalLayout);
 
-        // Advance the stream only if button is "Play"
         if (advanceTime) {
             currentSignalIndex += STEP_SEC;
         }
     }
+
+// Add this debug function to your ecg_logic.js (at the very end, before the closing });)
+// You can run this in the browser console after loading a file
+
+function debugDetectionButton() {
+    console.log('\n========== ECG DETECTION BUTTON DEBUG ==========');
+
+    // Check if elements exist
+    const detectionContainer = document.getElementById('ecg-detection-container');
+    const detectBtn = document.getElementById('ecg-btn-detect');
+    const detectionResults = document.getElementById('ecg-detection-results');
+
+    console.log('1. DOM Elements:');
+    console.log('   - Detection Container:', detectionContainer ? '✅ Found' : '❌ NOT FOUND');
+    console.log('   - Detection Button:', detectBtn ? '✅ Found' : '❌ NOT FOUND');
+    console.log('   - Results Container:', detectionResults ? '✅ Found' : '❌ NOT FOUND');
+
+    if (detectionContainer) {
+        console.log('\n2. Container Styles:');
+        console.log('   - display:', detectionContainer.style.display);
+        console.log('   - visibility:', detectionContainer.style.visibility || 'not set');
+        console.log('   - opacity:', detectionContainer.style.opacity || 'not set');
+
+        const computed = window.getComputedStyle(detectionContainer);
+        console.log('\n3. Computed Styles:');
+        console.log('   - display:', computed.display);
+        console.log('   - visibility:', computed.visibility);
+        console.log('   - opacity:', computed.opacity);
+        console.log('   - height:', computed.height);
+
+        console.log('\n4. Element Metrics:');
+        console.log('   - offsetHeight:', detectionContainer.offsetHeight, '(0 = hidden)');
+        console.log('   - offsetWidth:', detectionContainer.offsetWidth, '(0 = hidden)');
+    }
+
+    if (detectBtn) {
+        console.log('\n5. Button State:');
+        console.log('   - disabled:', detectBtn.disabled);
+        console.log('   - display:', detectBtn.style.display || 'not set');
+    }
+
+    if (globalECGData) {
+        console.log('\n6. Loaded ECG Data:');
+        console.log('   - Filename:', globalECGData.filename);
+        console.log('   - Sampling Frequency:', globalECGData.fs, 'Hz');
+        console.log('   - Is 100Hz?:', globalECGData.fs === 100 ? '✅ YES' : '❌ NO');
+        console.log('   - Channels:', globalECGData.channel_names.length);
+        console.log('   - Duration:', globalECGData.duration, 'seconds');
+    } else {
+        console.log('\n6. Loaded ECG Data: ❌ No data loaded');
+    }
+
+    console.log('\n7. Expected Behavior:');
+    if (globalECGData && globalECGData.fs === 100) {
+        console.log('   ✅ Button SHOULD be visible (100Hz signal)');
+        if (detectionContainer && detectionContainer.style.display === 'none') {
+            console.error('   ❌ ERROR: Button is hidden but should be visible!');
+        }
+    } else if (globalECGData) {
+        console.log(`   ⚠️ Button SHOULD be hidden (${globalECGData.fs}Hz signal, needs 100Hz)`);
+        if (detectionContainer && detectionContainer.style.display !== 'none') {
+            console.error('   ❌ ERROR: Button is visible but should be hidden!');
+        }
+    }
+
+    console.log('===============================================\n');
+}
+
+// Also add this to window so you can call it from console
+window.debugDetectionButton = debugDetectionButton;
+
+console.log('[ECG] Debug function loaded. Run debugDetectionButton() in console after loading a file.');
 });
