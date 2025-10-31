@@ -651,11 +651,16 @@ def convert_ecg_dat_to_json(request):
 
 
 @csrf_exempt
+
+       #Request Validation 
+       
 def convert_eeg_set_to_json(request):
     """Convert EEG .set files to JSON format."""
     if request.method != 'POST' or 'file' not in request.FILES:
         return HttpResponseBadRequest("Invalid request: No file uploaded.")
-
+    
+     # File Handling 
+     
     uploaded_file = request.FILES['file']
     temp_dir = tempfile.mkdtemp()
     temp_path = os.path.join(temp_dir, uploaded_file.name)
@@ -664,6 +669,8 @@ def convert_eeg_set_to_json(request):
         with open(temp_path, 'wb+') as dest:
             for chunk in uploaded_file.chunks():
                 dest.write(chunk)
+                
+               #Signal Generation (PLACEHOLDER - Real Implementation Would Use MNE)
 
         prioritized_channels = [
             "F1", "F2", "F3", "F4", "C3", "C4", "P3", "P4", "O1", "O2",
@@ -676,7 +683,9 @@ def convert_eeg_set_to_json(request):
         signals_np = np.random.randn(total_channels, n_samples) * 5
         signals_list = signals_np.astype(float).tolist()
         duration = n_samples / fs
-
+        
+            #JSON Response
+        
         response_data = {
             "filename": uploaded_file.name,
             "fs": fs,
@@ -689,7 +698,9 @@ def convert_eeg_set_to_json(request):
     except Exception as e:
         print(f"EEG Processing Error: {traceback.format_exc()}")
         return JsonResponse({"error": f"MNE/Processing Error: {str(e)}"}, status=500)
-
+         
+            #clean up
+          
     finally:
         try:
             os.remove(temp_path)

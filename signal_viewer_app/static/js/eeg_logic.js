@@ -51,6 +51,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // --- Signal Processing Utilities (Unchanged) ---
+    // Purpose: Downsample signal to simulate lower sampling frequency
+    // Example: 250 Hz → 100 Hz (take every 2.5th sample)
 
     function resampleSignal(signal, actualFs, simulatedFs) {
         if (simulatedFs >= actualFs) {
@@ -64,6 +66,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return resampled;
     }
+
+    // Purpose: Remove frequencies above Nyquist limit before resampling
+    // Method: Simple moving average (window-based) 
 
     function applyLowPassFilter(signal, actualFs, simulatedFs) {
         const cutoffFreq = simulatedFs / 2;
@@ -91,7 +96,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return filteredSignal;
     }
-
+    // Purpose: Shows correlation patterns between two channels
+    // Output: 60x60 heatmap (Viridis colorscale)
+    
     function computeRecurrenceMatrix(sig_x, sig_y, bins = 60) {
         if (sig_x.length === 0 || sig_y.length === 0) return Array(bins).fill(0).map(() => Array(bins).fill(0).map(() => 0));
 
@@ -231,9 +238,19 @@ document.addEventListener('DOMContentLoaded', function() {
         playBtn.disabled = false;
         pauseBtn.disabled = false;
         if (resetBtn) resetBtn.disabled = false;
+      // user select different channels from dropdowns
 
+       // Effect:
+       // Re-renders plot with newly selected channels
+        // Does NOT affect playback position
+       // XOR and Recurrence modes use first selected primary channel + pair channel
         primaryChSelect.onchange = () => updatePlots(false);
         pairChSelect.onchange = () => updatePlots(false);
+
+//          Effect:
+// Changes window from 1-10 seconds
+// Updates display immediately
+// Does NOT affect playback position
 
         if (timeSlider && windowSizeOutput) {
             timeSlider.oninput = () => {
@@ -253,6 +270,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (nyquistFsOutput) nyquistFsOutput.textContent = initialSliderFs.toFixed(0);
         if (maxFreqOutput) maxFreqOutput.textContent = maxNyquist.toFixed(0);
 
+            //  Effect:
+            //  Updates displayed Fs and Nyquist limit
+            //  Does NOT immediately re-render (waits for next frame)
+            //  User must click Reset to apply new Fs to the entire signal
+
         if (nyquistSlider) {
             nyquistSlider.oninput = () => {
                 const simulatedFs = parseFloat(nyquistSlider.value);
@@ -266,6 +288,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (resetBtn) {
             resetBtn.onclick = resetSignal;
         }
+
+    // Effect:
+    // Changes currentVisualizationMode variable
+    // Immediately re-renders plot in new mode
+    // Button styling updates (blue highlight)
 
         document.querySelectorAll('.btn-mode').forEach(button => {
             button.onclick = (e) => {
@@ -293,6 +320,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     playBtn.onclick = playSignal;
     pauseBtn.onclick = pauseSignal;
+
+            //Effect:
+            //  updatePlots() is called every 200ms
+            // Each call advances currentSignalIndex by 0.2 seconds
+             // Plot refreshes with new time window
 
     function playSignal() {
         if (streamInterval) clearInterval(streamInterval);
@@ -339,24 +371,27 @@ document.addEventListener('DOMContentLoaded', function() {
     function updatePlots(advanceTime = true) {
         if (!globalEEGData) return;
 
+        // Get selected channels
         const { fs, duration, channel_names } = globalEEGData;
         const primaryChOptions = primaryChSelect.options;
         const selectedChIndices = Array.from(primaryChOptions).filter(opt => opt.selected).map(opt => parseInt(opt.value));
 
+        // Get first selected channel for pair analysis 
         const primaryChannelForPair = selectedChIndices.length > 0 ? selectedChIndices[0] : 0;
         const pairChIndex = parseInt(pairChSelect.value);
 
+         // Validation
         if (selectedChIndices.length === 0) {
              updateStatus("Please select at least one channel to plot.", 'alert-info');
              return;
         }
-
+         // Get current window parameters
         const currentWindowSec = parseFloat(timeSlider.value);
         const simulatedFs = parseFloat(nyquistSlider.value);
-
+         // Calculate time window boundaries 
         let s_sec = currentSignalIndex;
         let e_sec = currentSignalIndex + currentWindowSec;
-
+           // Handle end of signal (loop back to start)
         if (e_sec >= duration) {
             e_sec = duration;
             if (s_sec >= duration - STEP_SEC) {
@@ -365,14 +400,14 @@ document.addEventListener('DOMContentLoaded', function() {
                  e_sec = currentWindowSec;
             }
         }
-
+           // Get resampled data for pair analysis channels
         const sigA_resampled = getResampledDataForChannel(primaryChannelForPair, currentWindowSec);
         const sigB_resampled = getResampledDataForChannel(pairChIndex, currentWindowSec);
-
+           // Create time axis for resampled data
         const numSamples = sigA_resampled.length;
         const timeAxis_resampled = Array.from({ length: numSamples }, (_, i) => s_sec + (i / simulatedFs));
 
-
+          // Console logging (for debugging)
         // --- Console Output (Unchanged) ---
         if (advanceTime) {
             const nyquistLimit = simulatedFs / 2;
@@ -382,9 +417,9 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log(`Samples Plotted: ${numSamples}`);
             console.log(`Nyquist Limit: ${nyquistLimit.toFixed(1)} Hz`);
         }
-
+          // Update time window display
         if (linearTimeWindow) linearTimeWindow.textContent = `${s_sec.toFixed(2)}-${e_sec.toFixed(2)}s`;
-
+          // Initialize plot variables
         let traces = [];
         let layoutUpdates = {};
         let plotTitle = '';
@@ -392,6 +427,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // --- DYNAMIC VISUALIZATION LOGIC ---
 
         if (currentVisualizationMode === 'linear') {
+            // -------------------- MODE 1: LINEAR WAVEFORM 
             plotTitle = `1. Linear Waveform (Fs: ${simulatedFs.toFixed(0)} Hz, Samples: ${numSamples})`;
 
             traces = selectedChIndices.map(chIndex => ({
