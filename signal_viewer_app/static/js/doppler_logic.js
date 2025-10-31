@@ -18,6 +18,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const currentSrDisplay = document.getElementById('doppler-current-sr-display');
     const playResampledBtn = document.getElementById('doppler-play-resampled-btn');
 
+    console.log('Button element check:', {
+        playResampledBtn: !!playResampledBtn,
+        resampleSlider: !!resampleSlider
+    });
+
     // State variables
     let originalAudioData = null;
     let currentSampleRate = 44100;
@@ -71,32 +76,29 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // FIXED: Resample audio based on DURATION, not based on current sample rate
-    // This ensures the resampled audio has the same duration as the original
+    // Resample audio to maintain the SAME DURATION but at different sample rate
+    // This creates aliasing artifacts when downsampling below Nyquist frequency
     function resampleAudioByDuration(audioData, currentRate, targetRate, duration) {
-        // Calculate how many samples we need at the target rate to maintain the same duration
+        // Calculate how many samples we need at target rate to maintain same duration
+        // Duration = samples / sampleRate, so samples = duration * sampleRate
         const targetSamples = Math.floor(duration * targetRate);
         const resampled = new Float32Array(targetSamples);
 
-        console.log(`Resampling: ${audioData.length} samples @ ${currentRate}Hz -> ${targetSamples} samples @ ${targetRate}Hz`);
-        console.log(`Duration maintained: ${duration.toFixed(3)}s`);
+        console.log(`\n=== RESAMPLING AUDIO ===`);
+        console.log(`Input: ${audioData.length} samples @ ${currentRate}Hz (duration: ${(audioData.length/currentRate).toFixed(3)}s)`);
+        console.log(`Target: ${targetSamples} samples @ ${targetRate}Hz (duration: ${duration.toFixed(3)}s)`);
+        console.log(`Downsample ratio: ${(audioData.length/targetSamples).toFixed(3)}x`);
 
-        // Map from target sample index to source sample index based on duration
+        // Simple downsampling by taking every Nth sample (causes aliasing!)
+        const step = audioData.length / targetSamples;
+        
         for (let i = 0; i < targetSamples; i++) {
-            // Calculate the time position of this sample
-            const timePosition = i / targetRate;
-            // Find the corresponding position in the source audio
-            const sourceIndex = timePosition * currentRate;
-
-            const index0 = Math.floor(sourceIndex);
-            const index1 = Math.min(index0 + 1, audioData.length - 1);
-            const fraction = sourceIndex - index0;
-
-            if (index0 < audioData.length) {
-                resampled[i] = audioData[index0] * (1 - fraction) + audioData[index1] * fraction;
-            }
+            const sourceIndex = Math.floor(i * step);
+            resampled[i] = audioData[Math.min(sourceIndex, audioData.length - 1)];
         }
 
+        console.log(`✓ Resampling complete: ${resampled.length} samples @ ${targetRate}Hz`);
+        console.log(`   Playback duration will be: ${(resampled.length/targetRate).toFixed(3)}s`);
         return Array.from(resampled);
     }
 
@@ -223,16 +225,44 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // Store data
-        originalAudioData = data.waveform_data;
+        originalAudioData = data.waveform_data;  // Downsampled for plotting
         currentSampleRate = data.sr;
         originalSampleRate = data.sr;
         originalMaxFrequency = data.max_frequency;
         nyquistFrequencyRequired = 2 * originalMaxFrequency;
-        resampledAudioData = data.waveform_data;
+        resampledAudioData = data.waveform_data;  // Initially same as original (downsampled)
         audioDataURI = `data:audio/wav;base64,${data.audio_b64}`;
-        originalDuration = originalAudioData.length / currentSampleRate;
+        
+        // IMPORTANT: Calculate duration from the ACTUAL audio file, not downsampled data
+        // The waveform_data is downsampled for plotting, but the WAV contains full audio
+        // For a 5-second file at 44100 Hz, we have 220500 samples, but waveform_data only has ~10000
+        originalDuration = 5.0;  // FIXED_DURATION from server
+        
+        // For resampling, we'll need the full audio data, so let's decode the WAV
+        console.log('Decoding full audio from WAV...');
+        fetch(audioDataURI)
+            .then(response => response.arrayBuffer())
+            .then(arrayBuffer => {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                return audioContext.decodeAudioData(arrayBuffer);
+            })
+            .then(audioBuffer => {
+                // Extract the full audio samples
+                const fullAudioData = audioBuffer.getChannelData(0);
+                originalAudioData = Array.from(fullAudioData);
+                resampledAudioData = Array.from(fullAudioData);
+                originalDuration = audioBuffer.duration;
+                
+                console.log(`✓ Full audio decoded: ${originalAudioData.length} samples at ${originalSampleRate} Hz = ${originalDuration.toFixed(3)}s`);
+            })
+            .catch(error => {
+                console.error('Error decoding audio:', error);
+                // Fallback to downsampled data
+                console.warn('Using downsampled waveform data for resampling');
+            });
 
-        console.log(`Original audio: ${originalAudioData.length} samples at ${originalSampleRate} Hz = ${originalDuration.toFixed(3)}s`);
+        console.log(`Original audio (downsampled for plot): ${data.waveform_data.length} samples at ${originalSampleRate} Hz`);
+        console.log(`Actual duration: ${originalDuration.toFixed(3)}s`);
 
         // Update original audio player
         if (playerOriginalDiv) {
@@ -347,6 +377,13 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                     }
 
                     console.log(`✓ Resampled waveform plotted`);
+                    
+                    // Update status to show resampling is complete
+                    if (newSampleRate < nyquistFrequencyRequired) {
+                        updateStatus(`✓ Audio resampled to ${newSampleRate} Hz - Ready to play with ALIASING! Click "Play Resampled Audio" button.`, 'alert-warning');
+                    } else {
+                        updateStatus(`✓ Audio resampled to ${newSampleRate} Hz - Ready to play (No aliasing at this rate).`, 'alert-info');
+                    }
                 }
             }, 150); // 150ms debounce delay
         };
@@ -355,22 +392,50 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
     // Play resampled button handler
     if (playResampledBtn) {
         playResampledBtn.onclick = () => {
-            if (!resampledAudioData) {
-                updateStatus("⚠️ No resampled audio available.", 'alert-warning');
+            console.log(`\n=== PLAY RESAMPLED BUTTON CLICKED ===`);
+            console.log(`resampledAudioData exists: ${!!resampledAudioData}`);
+            console.log(`resampledAudioData length: ${resampledAudioData ? resampledAudioData.length : 'N/A'}`);
+            console.log(`originalAudioData exists: ${!!originalAudioData}`);
+            
+            if (!resampledAudioData || resampledAudioData.length === 0) {
+                console.error('❌ No resampled audio data available!');
+                updateStatus("⚠️ No resampled audio available. Please generate Doppler audio first.", 'alert-warning');
+                return;
+            }
+
+            if (!resampleSlider) {
+                console.error('❌ Resample slider not found!');
+                updateStatus("⚠️ Error: Slider not found.", 'alert-danger');
                 return;
             }
 
             const currentRate = parseInt(resampleSlider.value);
-            const resampledDuration = resampledAudioData.length / currentRate;
-
+            
             console.log(`\n=== PLAYING RESAMPLED AUDIO ===`);
-            console.log(`Sample rate: ${currentRate} Hz`);
-            console.log(`Samples: ${resampledAudioData.length}`);
-            console.log(`Duration: ${resampledDuration.toFixed(3)}s (original: ${originalDuration.toFixed(3)}s)`);
+            console.log(`Target sample rate: ${currentRate} Hz`);
+            console.log(`Original sample rate: ${originalSampleRate} Hz`);
+            console.log(`Original duration: ${originalDuration.toFixed(3)}s`);
+            console.log(`Resampled data samples: ${resampledAudioData.length}`);
 
-            const wavBuffer = audioArrayToWav(resampledAudioData, currentRate);
+            // Calculate the duration when played at the target rate
+            const resampledDuration = resampledAudioData.length / currentRate;
+            console.log(`Duration when played at ${currentRate}Hz: ${resampledDuration.toFixed(3)}s`);
+
+            // Create WAV at the target sample rate (this will preserve the aliasing effect)
+            console.log(`Creating WAV buffer...`);
+            let wavBuffer;
+            try {
+                wavBuffer = audioArrayToWav(resampledAudioData, currentRate);
+                console.log(`✓ WAV buffer created, size: ${wavBuffer.byteLength} bytes`);
+            } catch (error) {
+                console.error('❌ Error creating WAV:', error);
+                updateStatus("❌ Error creating audio file.", 'alert-danger');
+                return;
+            }
+
             const blob = new Blob([wavBuffer], { type: 'audio/wav' });
             const url = URL.createObjectURL(blob);
+            console.log(`✓ Blob URL created: ${url.substring(0, 50)}...`);
 
             if (playerResampledDiv) {
                 playerResampledDiv.style.display = 'block';
@@ -382,15 +447,23 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                 playerResampledDiv.innerHTML = `
                     <h5 style="color: #f78166;">Resampled Audio Player (${currentRate} Hz, Duration: ${resampledDuration.toFixed(2)}s) ${aliasingWarning}</h5>
                     <audio controls autoplay src="${url}" style="width: 100%;"></audio>
+                    <p class="text-secondary mt-2" style="font-size: 0.9rem;">
+                        <strong>Info:</strong> ${resampledAudioData.length} samples @ ${currentRate}Hz = ${resampledDuration.toFixed(2)}s playback
+                    </p>
                 `;
             }
 
             const statusMsg = currentRate < nyquistFrequencyRequired
-                ? `🔊 Playing resampled audio at ${currentRate} Hz - Listen for ALIASING artifacts! Duration: ${resampledDuration.toFixed(2)}s`
+                ? `🔊 Playing aliased audio at ${currentRate} Hz - Listen for ALIASING artifacts! Duration: ${resampledDuration.toFixed(2)}s`
                 : `🔊 Playing resampled audio at ${currentRate} Hz - No aliasing. Duration: ${resampledDuration.toFixed(2)}s`;
 
             updateStatus(statusMsg, currentRate < nyquistFrequencyRequired ? 'alert-warning' : 'alert-info');
+            
+            console.log(`✓ Audio player created and playing`);
         };
+        console.log('✓ Play Resampled button onclick handler attached');
+    } else {
+        console.warn('⚠️ Play Resampled button not found - handler not attached');
     }
 
     // MAIN GENERATE BUTTON HANDLER
