@@ -16,6 +16,7 @@ urlpatterns = [
 
     # --- API Paths ---
     # Path for ECG (already working)
+    # Note: The calling of the function is with the api/x not the name in javascript logic
     path('api/convert_ecg/', views.convert_ecg_dat_to_json, name='api_convert_ecg'),
 
     # Path for EEG

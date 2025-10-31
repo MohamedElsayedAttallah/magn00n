@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
+    // === DOM ELEMENT REFERENCES ===
     const dropZone = document.getElementById('drop-zone-detect');
     const fileInput = document.getElementById('detect-file-input');
     const analyzeButton = document.getElementById('analyze-audio-button');
@@ -17,21 +18,25 @@ document.addEventListener('DOMContentLoaded', function() {
     const currentSrDisplay = document.getElementById('current-sr-display');
     const playResampledBtn = document.getElementById('play-resampled-btn');
 
-    let uploadedFile = null;
-    let audioDataURI = null;
-    let predictionData = null;
-    let originalAudioData = null;
-    let currentSampleRate = 16000;
-    let originalSampleRate = 16000;
-    let originalMaxFrequency = 0;
-    let nyquistFrequencyRequired = 0;
-    let resampledAudioData = null;
-    let sliderTimeout = null;
-    let originalDuration = 0; // Track the original audio duration in seconds
+    // === STATE VARIABLES ===
+    let uploadedFile = null;              // User's uploaded audio file
+    let audioDataURI = null;              // Base64 data URI of the audio
+    let predictionData = null;            // YAMNet classification results
+    let originalAudioData = null;         // Full audio samples from analysis
+    let currentSampleRate = 16000;        // Current sample rate after processing
+    let originalSampleRate = 16000;       // Original file's sample rate
+    let originalMaxFrequency = 0;         // Maximum frequency present in audio
+    let nyquistFrequencyRequired = 0;     // Minimum required sample rate (2×max_freq)
+    let resampledAudioData = null;        // Downsampled audio for aliasing demonstration
+    let sliderTimeout = null;             // Debounce timer for slider interactions
+    let originalDuration = 0;             // Audio duration in seconds
 
-    // Maximum number of points to display on graph for performance
+    // Limit plot points for rendering performance
     const MAX_PLOT_POINTS = 2000;
 
+    // === HELPER FUNCTIONS ===
+    
+    // Extract CSRF token from cookies for Django POST requests
     function getCookie(name) {
         let cookieValue = null;
         if (document.cookie && document.cookie !== '') {
@@ -47,11 +52,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return cookieValue;
     }
 
+    // Update status message display
     function updateStatus(message, alertClass = 'alert-info') {
         statusDiv.className = `alert ${alertClass}`;
         statusDiv.innerHTML = message;
     }
 
+    // Read file as base64 data URI for transmission to server
     function readFileAsDataURI(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -61,8 +68,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // === FILE HANDLING ===
+    
+    // Validate and process uploaded audio file
     async function handleFile(file) {
         const fileName = file.name.toLowerCase();
+        
+        // Validate file type
         if (!fileName.endsWith('.wav') && !fileName.endsWith('.mp3')) {
             updateStatus("⚠️ Invalid file type. Must be .wav or .mp3.", 'alert-danger');
             analyzeButton.disabled = true;
@@ -70,6 +82,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        // Warn for large files (server limits to 30 seconds)
         const fileSizeMB = file.size / (1024 * 1024);
         if (fileSizeMB > 10) {
             updateStatus(`⚠️ Warning: Large file (${fileSizeMB.toFixed(1)}MB). Audio will be limited to 30 seconds for analysis.`, 'alert-warning');
@@ -79,12 +92,13 @@ document.addEventListener('DOMContentLoaded', function() {
         updateStatus(`File selected: ${file.name} (${fileSizeMB.toFixed(1)}MB). Reading audio data...`, 'alert-warning');
 
         try {
+            // Convert file to base64 for server transmission
             audioDataURI = await readFileAsDataURI(file);
             updateStatus(`Audio file loaded (${file.name}). Ready for analysis.`, 'alert-info');
             analyzeButton.disabled = false;
             playButton.disabled = false;
 
-            // Reset all analysis data for new audio file
+            // Reset previous analysis state for new file
             nyquistSection.style.display = 'none';
             resampledGraphContainer.style.display = 'none';
             playerResampledDiv.style.display = 'none';
@@ -102,6 +116,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // === EVENT LISTENERS ===
+    
+    // Click drop zone to trigger file input
     if (dropZone && fileInput) {
         dropZone.addEventListener('click', (e) => {
             if (e.target === dropZone || e.target.tagName !== 'INPUT') {
@@ -110,6 +127,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Drag-and-drop file handling
     if (dropZone) {
         dropZone.ondragover = (e) => {
             e.preventDefault();
@@ -129,15 +147,17 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // File input change handler
     if (fileInput) {
         fileInput.onchange = (e) => {
             if (e.target.files.length) {
                 handleFile(e.target.files[0]);
             }
-            fileInput.value = '';
+            fileInput.value = ''; // Reset to allow same file re-upload
         };
     }
 
+    // Play original audio button
     playButton.onclick = () => {
         if (!audioDataURI) return;
         playerOriginalDiv.innerHTML = `
@@ -146,29 +166,31 @@ document.addEventListener('DOMContentLoaded', function() {
         `;
     };
 
+    // Analyze audio button - triggers YAMNet classification
     analyzeButton.onclick = async () => {
         await performAnalysis(originalSampleRate);
     };
 
-    // FIXED: Resample audio based on DURATION, not based on current sample rate
-    // This ensures the resampled audio has the same duration as the original
+    // === AUDIO PROCESSING FUNCTIONS ===
+    
+    // Resample audio while maintaining the same playback duration
+    // This demonstrates aliasing by taking fewer samples at a lower rate
     function resampleAudioByDuration(audioData, currentRate, targetRate, duration) {
-        // Calculate how many samples we need at the target rate to maintain the same duration
+        // Calculate target sample count: duration (seconds) × sample rate (Hz)
         const targetSamples = Math.floor(duration * targetRate);
         const resampled = new Float32Array(targetSamples);
 
-        // Map from target sample index to source sample index based on duration
+        // Linear interpolation between samples to maintain audio quality
         for (let i = 0; i < targetSamples; i++) {
-            // Calculate the time position of this sample
-            const timePosition = i / targetRate;
-            // Find the corresponding position in the source audio
-            const sourceIndex = timePosition * currentRate;
-
+            const timePosition = i / targetRate;                    // Time of this sample
+            const sourceIndex = timePosition * currentRate;         // Corresponding position in source
+            
             const index0 = Math.floor(sourceIndex);
             const index1 = Math.min(index0 + 1, audioData.length - 1);
             const fraction = sourceIndex - index0;
 
             if (index0 < audioData.length) {
+                // Interpolate between adjacent samples
                 resampled[i] = audioData[index0] * (1 - fraction) + audioData[index1] * fraction;
             }
         }
@@ -176,7 +198,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return Array.from(resampled);
     }
 
-    // Downsample data for plotting to improve performance
+    // Reduce data points for plotting performance (keep every Nth sample)
     function downsampleForPlotting(data, maxPoints) {
         if (data.length <= maxPoints) {
             return data;
@@ -192,7 +214,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return downsampled;
     }
 
-    // Convert audio array to WAV file
+    // Convert Float32 audio array to WAV file format
     function audioArrayToWav(audioData, sampleRate) {
         const numChannels = 1;
         const bitsPerSample = 16;
@@ -200,29 +222,32 @@ document.addEventListener('DOMContentLoaded', function() {
         const blockAlign = numChannels * bytesPerSample;
 
         const dataLength = audioData.length * bytesPerSample;
-        const buffer = new ArrayBuffer(44 + dataLength);
+        const buffer = new ArrayBuffer(44 + dataLength);  // 44-byte WAV header
         const view = new DataView(buffer);
 
+        // Helper to write ASCII strings into buffer
         const writeString = (offset, string) => {
             for (let i = 0; i < string.length; i++) {
                 view.setUint8(offset + i, string.charCodeAt(i));
             }
         };
 
+        // Write WAV file header
         writeString(0, 'RIFF');
         view.setUint32(4, 36 + dataLength, true);
         writeString(8, 'WAVE');
         writeString(12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true);
+        view.setUint32(16, 16, true);                      // Subchunk1 size (PCM)
+        view.setUint16(20, 1, true);                       // Audio format (1 = PCM)
         view.setUint16(22, numChannels, true);
         view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * blockAlign, true);
+        view.setUint32(28, sampleRate * blockAlign, true); // Byte rate
         view.setUint16(32, blockAlign, true);
         view.setUint16(34, bitsPerSample, true);
         writeString(36, 'data');
         view.setUint32(40, dataLength, true);
 
+        // Write audio samples (convert float [-1,1] to int16)
         let offset = 44;
         for (let i = 0; i < audioData.length; i++) {
             const sample = Math.max(-1, Math.min(1, audioData[i]));
@@ -233,6 +258,9 @@ document.addEventListener('DOMContentLoaded', function() {
         return buffer;
     }
 
+    // === ANALYSIS FUNCTION ===
+    
+    // Send audio to server for YAMNet classification and receive results
     async function performAnalysis(targetSampleRate) {
         if (!uploadedFile || !audioDataURI) {
             updateStatus("⚠️ No audio file loaded.", 'alert-warning');
@@ -253,6 +281,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 target_sample_rate: targetSampleRate
             });
 
+            // POST audio to Django backend
             const response = await fetch('/api/analyze_audio/', {
                 method: 'POST',
                 headers: {
@@ -262,6 +291,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: requestBody,
             });
 
+            // Handle server errors
             if (!response.ok) {
                 const contentType = response.headers.get('content-type');
                 let errorMessage;
@@ -287,6 +317,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(json_data.error);
             }
 
+            // Store analysis results
             predictionData = json_data;
             originalAudioData = json_data.waveform;
             currentSampleRate = json_data.sr;
@@ -294,8 +325,6 @@ document.addEventListener('DOMContentLoaded', function() {
             originalMaxFrequency = json_data.max_frequency;
             nyquistFrequencyRequired = 2 * originalMaxFrequency;
             resampledAudioData = json_data.waveform;
-
-            // Calculate and store the original duration
             originalDuration = originalAudioData.length / currentSampleRate;
 
             renderResults(json_data);
@@ -308,8 +337,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // === VISUALIZATION FUNCTIONS ===
+    
+    // Plot audio waveform using Plotly (time domain visualization)
     function plotTimeDomain(waveform, sr, divElement, title, showMarkers = false) {
-        // Downsample for plotting performance
+        // Downsample for efficient rendering
         const plotData = downsampleForPlotting(waveform, MAX_PLOT_POINTS);
         const downsampleFactor = Math.ceil(waveform.length / plotData.length);
         const timeAxis = Array.from({ length: plotData.length }, (_, i) => (i * downsampleFactor) / sr);
@@ -322,7 +354,7 @@ document.addEventListener('DOMContentLoaded', function() {
             name: 'Amplitude'
         };
 
-        // Only add markers if showing them and data is small enough
+        // Add markers for low sample rate visualization
         if (showMarkers && plotData.length < 500) {
             traceConfig.marker = {
                 size: 4,
@@ -355,6 +387,7 @@ document.addEventListener('DOMContentLoaded', function() {
         Plotly.newPlot(divElement, [traceConfig], timeDomainLayout, {responsive: true});
     }
 
+    // Update Nyquist sampling theorem information display
     function updateNyquistAnalysis(currentRate) {
         document.getElementById('original-sr').textContent = `${originalSampleRate} Hz`;
         document.getElementById('current-sr').textContent = `${currentRate} Hz`;
@@ -363,6 +396,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const statusElement = document.getElementById('sampling-status');
 
+        // Check if current rate satisfies Nyquist criterion (fs >= 2×fmax)
         if (currentRate < nyquistFrequencyRequired) {
             statusElement.textContent = `⚠️ Under-sampling (Current rate < ${nyquistFrequencyRequired.toFixed(0)} Hz)`;
             statusElement.style.color = '#f78166';
@@ -374,6 +408,7 @@ document.addEventListener('DOMContentLoaded', function() {
         nyquistSection.style.display = 'block';
     }
 
+    // Display YAMNet classification results (prediction + probabilities)
     function renderResults(data) {
         const predictionColor = (data.predicted_class === 'Drone') ? '#00B8A9' : '#FFA500';
 
@@ -383,6 +418,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </h4>
         `;
 
+        // Plot probability distribution bar chart
         const barTrace = {
             x: data.class_names,
             y: data.probabilities.map(p => p * 100),
@@ -405,7 +441,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         Plotly.newPlot(probabilitiesDiv, [barTrace], barLayout, {responsive: true});
 
-        // Plot original audio without markers for performance
+        // Plot waveform without markers for performance
         plotTimeDomain(
             data.waveform,
             data.sr,
@@ -416,6 +452,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         updateNyquistAnalysis(data.sr);
 
+        // Display debug information
         debugDiv.innerHTML = `<pre>File: ${data.filename}
 Original Sample Rate: ${originalSampleRate} Hz
 Current Sample Rate: ${data.sr} Hz
@@ -429,17 +466,19 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         updateStatus(`✅ Analysis complete for ${data.filename}.`, 'alert-success');
     }
 
-    // Optimized slider with debouncing
+    // === RESAMPLING SLIDER INTERACTION ===
+    
+    // Slider handler with debouncing for smooth performance
     resampleSlider.oninput = (e) => {
         const newSampleRate = parseInt(e.target.value);
         currentSrDisplay.textContent = `${newSampleRate} Hz`;
 
-        // Clear previous timeout
+        // Clear previous debounce timer
         if (sliderTimeout) {
             clearTimeout(sliderTimeout);
         }
 
-        // Update status immediately
+        // Update status immediately (without waiting for debounce)
         document.getElementById('current-sr').textContent = `${newSampleRate} Hz`;
         const statusElement = document.getElementById('sampling-status');
 
@@ -451,10 +490,10 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
             statusElement.style.color = '#00B8A9';
         }
 
-        // Debounce the heavy resampling and plotting operation
+        // Debounce expensive operations (resampling + plotting)
         sliderTimeout = setTimeout(() => {
             if (originalAudioData && originalDuration > 0) {
-                // FIXED: Resample based on duration to maintain the same length
+                // Resample audio to new rate while maintaining duration
                 resampledAudioData = resampleAudioByDuration(
                     originalAudioData,
                     currentSampleRate,
@@ -464,10 +503,9 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
 
                 resampledGraphContainer.style.display = 'block';
 
-                // Calculate actual duration to verify
                 const resampledDuration = resampledAudioData.length / newSampleRate;
 
-                // Show markers only for very low sample rates to visualize downsampling
+                // Show sample markers for low rates to visualize aliasing
                 const showMarkers = newSampleRate < 4000;
 
                 plotTimeDomain(
@@ -481,6 +519,7 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         }, 150); // 150ms debounce delay
     };
 
+    // Play resampled audio button - create WAV from downsampled data
     playResampledBtn.onclick = () => {
         if (!resampledAudioData) {
             updateStatus("⚠️ No resampled audio available.", 'alert-warning');
@@ -490,6 +529,7 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         const currentRate = parseInt(resampleSlider.value);
         const resampledDuration = resampledAudioData.length / currentRate;
 
+        // Convert audio array to WAV file and create playable URL
         const wavBuffer = audioArrayToWav(resampledAudioData, currentRate);
         const blob = new Blob([wavBuffer], { type: 'audio/wav' });
         const url = URL.createObjectURL(blob);

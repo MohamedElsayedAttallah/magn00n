@@ -705,6 +705,7 @@ def process_sar_grd(request):
 # DRONE/BIRD AUDIO DETECTION
 # =============================================================================
 
+# disables Django CSRF check for this view
 @csrf_exempt
 def analyze_audio_detect_bird_and_drone(request):
     """Analyze audio for drone/bird classification using YAMNet."""
@@ -713,15 +714,17 @@ def analyze_audio_detect_bird_and_drone(request):
         return error_response
 
     # Parse request
+    # Audio URI (say the sound), target sample rate, error response for checking
     audio_data_uri, filename, target_sr, error_response = parse_audio_request(request)
     if error_response:
         return error_response
 
-    # Decode audio
+    # Decode audio, Here we take the Audio URi to decode it
     decoded_bytes, error_response = decode_audio_data(audio_data_uri)
     if error_response:
         return error_response
 
+    # check if dependecies exists
     if not ML_AVAILABLE:
         return JsonResponse({
             "error": "ML dependencies not available. Please install librosa and tensorflow."
@@ -733,6 +736,7 @@ def analyze_audio_detect_bird_and_drone(request):
         temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
         print(f"[DETECT] Loading audio file: {filename}")
         
+        # loads the file with the targeted sample rate
         audio, sr, sr_original = load_and_resample_audio(temp_audio_path, target_sr)
         print(f"[DETECT] Audio processed: {len(audio)} samples at {sr} Hz")
 
@@ -747,9 +751,11 @@ def analyze_audio_detect_bird_and_drone(request):
         try:
             print("[DETECT] Initializing YAMNet and loading model...")
             initialize_yamnet()
+            # Load the model to utilize
             model = load_finetuned_model(MODEL_PATH)
             
             print("[DETECT] Running prediction...")
+            # Here is the prediction processed
             prediction_result = predict_audio_class(model, audio, CLASS_NAMES)
             
             print(f"[DETECT] ✅ Result: {prediction_result['predicted_class']} "
@@ -781,39 +787,56 @@ def analyze_audio_detect_bird_and_drone(request):
         }, status=500)
 
     finally:
+        # clean after done
         cleanup_temp_file(temp_audio_path)
 
 
 # =============================================================================
 # VOICE GENDER DETECTION
 # =============================================================================
-# VOICE GENDER DETECTION
-# =============================================================================
 
 @csrf_exempt
 def analyze_voices_gender(request):
-    """Gender detection with frequency analysis and inaSpeechSegmenter integration."""
-    # Validate request
+    """
+    Analyzes audio to detect speaker gender using voice characteristics.
+    
+    Uses two methods:
+    1. Primary: inaSpeechSegmenter for ML-based gender classification
+    2. Fallback: Acoustic feature analysis (spectral centroid + pitch)
+    
+    Args:
+        request: Django POST request containing audio data URI
+        
+    Returns:
+        JsonResponse with gender prediction, confidence, and audio analysis data
+    """
+    
+    # ==================== REQUEST VALIDATION ====================
+    # Validate that this is a proper POST request with required data
     error_response = validate_post_request(request)
     if error_response:
         return error_response
     
-    # Parse audio request
+    # ==================== AUDIO PARSING ====================
+    # Extract audio data URI, filename, and target sample rate from request
     audio_data_uri, filename, target_sample_rate, error_response = parse_audio_request(request)
     if error_response:
         return error_response
     
-    # Decode audio data
+    # ==================== AUDIO DECODING ====================
+    # Decode base64 audio data URI into raw bytes
     decoded_bytes, error_response = decode_audio_data(audio_data_uri)
     if error_response:
         return error_response
     
+    # Initialize temporary file paths (will be cleaned up in finally block)
     temp_audio_path = None
     temp_wav_path = None
 
     try:
-        # Check FFmpeg availability
+        # ==================== FFMPEG AVAILABILITY CHECK ====================
         def check_ffmpeg():
+            """Check if FFmpeg is installed and accessible."""
             import subprocess
             try:
                 subprocess.run(['ffmpeg', '-version'],
@@ -827,37 +850,43 @@ def analyze_voices_gender(request):
         ffmpeg_available = check_ffmpeg()
         print(f"[GENDER] FFmpeg available: {ffmpeg_available}")
 
-        # Save temporary audio file
+        # ==================== SAVE TEMPORARY AUDIO FILE ====================
+        # Save decoded audio bytes to a temporary file for processing
         temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
         print(f"[GENDER] Processing: {filename}")
 
-        # Load and resample audio (keep original for WAV conversion)
+        # ==================== LOAD AND RESAMPLE AUDIO ====================
+        # Load audio and resample to target rate (keep original for WAV conversion)
+        # Limit to 30 seconds to improve processing speed
         audio, sr, sr_original, audio_original = load_and_resample_audio(
-            temp_audio_path, 
+            temp_audio_path,
             target_sample_rate,
             max_duration=30,
             return_original=True
         )
         print(f"[GENDER] Audio: {len(audio)} samples at {sr} Hz")
 
-        # Compute FFT analysis
+        # ==================== FFT ANALYSIS ====================
+        # Compute Fast Fourier Transform for frequency domain analysis
         fft_data = compute_fft_analysis(audio, sr)
 
-        # ========== IMPROVED GENDER DETECTION ==========
+        # ==================== GENDER DETECTION STRATEGY ====================
+        # Determine whether to use ML-based or fallback method
         use_fallback = False
         fallback_reason = ""
 
+        # If FFmpeg is not available, inaSpeechSegmenter won't work properly
         if not ffmpeg_available:
             use_fallback = True
             fallback_reason = "FFmpeg not installed"
             print(f"[GENDER] {fallback_reason} - using improved fallback")
 
-        # Try inaSpeechSegmenter
+        # ==================== PRIMARY METHOD: inaSpeechSegmenter ====================
         if not use_fallback:
             try:
                 print("[GENDER] Initializing inaSpeechSegmenter...")
 
-                # Convert to WAV if needed
+                # Convert audio to WAV format if needed (required by inaSpeechSegmenter)
                 if not temp_audio_path.lower().endswith('.wav'):
                     temp_wav_path = tempfile.NamedTemporaryFile(delete=False, suffix='.wav').name
                     sf.write(temp_wav_path, audio_original, sr_original)
@@ -865,9 +894,11 @@ def analyze_voices_gender(request):
                 else:
                     analysis_path = temp_audio_path
 
+                # Initialize segmenter with gender detection enabled
                 seg = Segmenter(vad_engine='smn', detect_gender=True)
                 segmentation = seg(analysis_path)
 
+                # Accumulate speech duration for each gender
                 male_duration = 0
                 female_duration = 0
                 total_speech = 0
@@ -877,6 +908,7 @@ def analyze_voices_gender(request):
                     duration = end - start
                     print(f"  {label:12} | {start:7.2f}s - {end:7.2f}s | {duration:6.2f}s")
 
+                    # Count duration for male and female speech segments
                     if label == 'male':
                         male_duration += duration
                         total_speech += duration
@@ -887,14 +919,17 @@ def analyze_voices_gender(request):
                 print(f"[GENDER] Total speech: {total_speech:.2f}s")
                 print(f"[GENDER] Male: {male_duration:.2f}s, Female: {female_duration:.2f}s")
 
+                # If no speech detected, fall back to acoustic analysis
                 if total_speech == 0:
                     use_fallback = True
                     fallback_reason = "No speech detected"
                     print(f"[GENDER] {fallback_reason}")
                 else:
+                    # Calculate probability based on duration ratios
                     male_probability = male_duration / total_speech
                     female_probability = female_duration / total_speech
 
+                    # Determine predicted gender based on majority duration
                     if male_duration > female_duration:
                         predicted_gender = 'Male'
                         confidence = male_probability
@@ -902,6 +937,7 @@ def analyze_voices_gender(request):
                         predicted_gender = 'Female'
                         confidence = female_probability
                     else:
+                        # Equal durations (rare case)
                         predicted_gender = 'Equal'
                         confidence = 0.5
                         male_probability = 0.5
@@ -910,92 +946,120 @@ def analyze_voices_gender(request):
                     print(f"[GENDER] Result: {predicted_gender} ({confidence:.1%})")
 
             except Exception as seg_error:
+                # If segmenter fails for any reason, use fallback method
                 use_fallback = True
                 fallback_reason = f"inaSpeechSegmenter error: {str(seg_error)}"
                 print(f"[GENDER] {fallback_reason}")
 
-        # IMPROVED FALLBACK METHOD
+        # ==================== FALLBACK METHOD: ACOUSTIC ANALYSIS ====================
         if use_fallback:
             print(f"[GENDER] Using IMPROVED fallback: {fallback_reason}")
 
-            # Method 1: Spectral Centroid (more accurate than zero-crossing)
+            # -------------------- Feature 1: Spectral Centroid --------------------
+            # Spectral centroid is the "center of mass" of the frequency spectrum
+            # Higher values indicate brighter, higher-pitched sounds
             spectral_centroids = librosa.feature.spectral_centroid(y=audio, sr=sr)[0]
             mean_spectral_centroid = np.mean(spectral_centroids)
 
-            # Method 2: Pitch detection using autocorrelation
+            # -------------------- Feature 2: Pitch Estimation --------------------
             def estimate_pitch_autocorr(signal, sr, fmin=50, fmax=400):
-                """Estimate pitch using autocorrelation method."""
-                # Normalize signal
+                """
+                Estimate fundamental frequency (F0) using autocorrelation method.
+                
+                This method finds the periodicity in the signal by correlating
+                the signal with delayed versions of itself.
+                
+                Args:
+                    signal: Audio signal array
+                    sr: Sample rate
+                    fmin: Minimum expected frequency (Hz)
+                    fmax: Maximum expected frequency (Hz)
+                    
+                Returns:
+                    Estimated fundamental frequency in Hz, or None if estimation fails
+                """
+                # Normalize signal by removing DC offset
                 signal = signal - np.mean(signal)
 
-                # Autocorrelation
+                # Compute autocorrelation (correlation of signal with itself)
                 autocorr = np.correlate(signal, signal, mode='full')
-                autocorr = autocorr[len(autocorr) // 2:]
+                autocorr = autocorr[len(autocorr) // 2:]  # Keep only positive lags
 
-                # Find peaks in autocorrelation
-                min_period = int(sr / fmax)
-                max_period = int(sr / fmin)
+                # Define search range based on expected frequency range
+                min_period = int(sr / fmax)  # Samples per period at max frequency
+                max_period = int(sr / fmin)  # Samples per period at min frequency
 
+                # Validate search range
                 if max_period >= len(autocorr):
                     return None
 
                 # Find the first significant peak after the minimum period
+                # This peak indicates the fundamental period of the signal
                 autocorr_segment = autocorr[min_period:max_period]
                 if len(autocorr_segment) == 0:
                     return None
 
                 peak_index = np.argmax(autocorr_segment) + min_period
-                estimated_freq = sr / peak_index
+                estimated_freq = sr / peak_index  # Convert period to frequency
 
                 return estimated_freq
 
-            # Estimate fundamental frequency
+            # Estimate fundamental frequency (F0/pitch)
             estimated_f0 = estimate_pitch_autocorr(audio, sr)
 
             print(f"[GENDER] Spectral centroid: {mean_spectral_centroid:.2f} Hz")
             print(f"[GENDER] Estimated F0: {estimated_f0:.2f} Hz" if estimated_f0 else "[GENDER] F0 estimation failed")
 
-            # Combined decision using multiple features
-            # Male typical ranges: F0: 85-180 Hz, Spectral Centroid: 200-500 Hz
-            # Female typical ranges: F0: 165-255 Hz, Spectral Centroid: 400-800 Hz
+            # -------------------- Multi-Feature Scoring System --------------------
+            # Typical voice characteristics:
+            # Male:   F0: 85-180 Hz,  Spectral Centroid: 200-500 Hz
+            # Female: F0: 165-255 Hz, Spectral Centroid: 400-800 Hz
 
             male_score = 0
             female_score = 0
 
-            # Score based on F0
+            # Score based on fundamental frequency (F0)
             if estimated_f0 is not None:
                 if estimated_f0 < 130:
+                    # Very low pitch → strongly male
                     male_score += 2.0
                 elif estimated_f0 > 200:
+                    # Very high pitch → strongly female
                     female_score += 2.0
                 elif estimated_f0 < 165:
+                    # Low pitch → moderately male
                     male_score += 1.0
                 else:
+                    # High pitch → moderately female
                     female_score += 1.0
 
-            # Score based on spectral centroid
+            # Score based on spectral centroid (brightness)
             if mean_spectral_centroid < 350:
+                # Dark/low frequency content → strongly male
                 male_score += 1.5
             elif mean_spectral_centroid > 600:
+                # Bright/high frequency content → strongly female
                 female_score += 1.5
             elif mean_spectral_centroid < 500:
+                # Somewhat dark → moderately male
                 male_score += 0.5
             else:
+                # Somewhat bright → moderately female
                 female_score += 0.5
 
-            # Calculate probabilities
+            # -------------------- Calculate Probabilities --------------------
             total_score = male_score + female_score
             if total_score > 0:
                 male_probability = male_score / total_score
                 female_probability = female_score / total_score
             else:
+                # If no clear indicators, default to equal probability
                 male_probability = 0.5
                 female_probability = 0.5
 
-            # Add some confidence based on how clear the signal is
-            confidence_factor = min(1.0, abs(male_probability - female_probability) * 2)
-
+            # -------------------- Confidence Adjustment --------------------
             # Ensure minimum confidence of 0.55 for clear decisions
+            # (Avoid appearing too uncertain when we have a clear winner)
             if male_probability > female_probability:
                 male_probability = max(0.55, male_probability)
                 female_probability = 1 - male_probability
@@ -1008,6 +1072,7 @@ def analyze_voices_gender(request):
                 confidence = female_probability
 
             # Cap maximum confidence at 0.90 for fallback method
+            # (We're less certain than ML-based approach)
             male_probability = min(0.90, male_probability)
             female_probability = min(0.90, female_probability)
             confidence = max(male_probability, female_probability)
@@ -1015,28 +1080,39 @@ def analyze_voices_gender(request):
             print(f"[GENDER] Fallback scores - Male: {male_score:.2f}, Female: {female_score:.2f}")
             print(f"[GENDER] Result: {predicted_gender} ({confidence:.1%})")
 
-            # Set durations for fallback
+            # -------------------- Set Duration Estimates --------------------
+            # For fallback, estimate durations based on probabilities
             total_speech = len(audio) / sr
             male_duration = male_probability * total_speech
             female_duration = female_probability * total_speech
 
-        # Prepare response
+        # ==================== PREPARE RESPONSE ====================
+        # Compile all analysis results into a JSON response
         response_data = {
+            # Gender prediction results
             "predicted_gender": predicted_gender,
             "confidence": float(confidence),
             "male_probability": float(male_probability),
             "female_probability": float(female_probability),
+            
+            # Audio data for visualization
             "waveform": audio.tolist(),
             "sr": sr,
             "original_sr": sr_original,
             "filename": filename,
+            
+            # Frequency analysis data
             "max_frequency": fft_data['max_frequency'],
             "nyquist_frequency": fft_data['nyquist_frequency'],
             "fft_frequencies": fft_data['fft_frequencies_plot'],
             "fft_magnitudes": fft_data['fft_magnitude_plot'],
+            
+            # Speech duration breakdown
             "total_speech_duration": float(total_speech),
             "male_speech_duration": float(male_duration),
             "female_speech_duration": float(female_duration),
+            
+            # Method used for detection
             "detection_method": "fallback" if use_fallback else "inaSpeechSegmenter",
             "fallback_reason": fallback_reason if use_fallback else None
         }
@@ -1044,7 +1120,9 @@ def analyze_voices_gender(request):
         print("[GENDER] ✅ Response prepared successfully")
         return JsonResponse(response_data)
 
+    # ==================== ERROR HANDLING ====================
     except Exception as e:
+        # Capture full traceback for debugging
         error_traceback = traceback.format_exc()
         print(f"[GENDER] ❌ Error:\n{error_traceback}")
         return JsonResponse({
@@ -1052,7 +1130,9 @@ def analyze_voices_gender(request):
             "traceback": error_traceback
         }, status=500)
 
+    # ==================== CLEANUP ====================
     finally:
+        # Always clean up temporary files, even if errors occurred
         if temp_audio_path and os.path.exists(temp_audio_path):
             try:
                 os.unlink(temp_audio_path)
@@ -1064,7 +1144,6 @@ def analyze_voices_gender(request):
                 os.unlink(temp_wav_path)
             except Exception as e:
                 print(f"[GENDER] Cleanup warning: {e}")
-
 
 # ========== CAR AUDIO ANALYSIS (NO CHANGES NEEDED) ==========
 @csrf_exempt
@@ -1225,64 +1304,91 @@ def generate_doppler_audio(request):
 
 @csrf_exempt
 def apply_anti_aliasing(request):
-    """Apply anti-aliasing to uploaded audio using pretrained neural network."""
-    # Validate request
+    """
+    Applies neural network-based anti-aliasing to audio files.
+    
+    Anti-aliasing removes unwanted high-frequency artifacts (aliasing) that occur
+    when audio is sampled at insufficient rates. This function uses a pretrained
+    deep learning model to enhance audio quality.
+    
+    Args:
+        request: Django POST request containing audio data URI
+        
+    Returns:
+        JsonResponse with enhanced audio (base64), waveform, and FFT analysis
+    """
+    
+    # ==================== REQUEST VALIDATION ====================
+    # Validate that this is a proper POST request with required data
     error_response = validate_post_request(request)
     if error_response:
         return error_response
     
-    # Parse audio request
+    # ==================== AUDIO PARSING ====================
+    # Extract audio data URI, filename, and sample rate from request
     audio_data_uri, filename, sample_rate, error_response = parse_audio_request(request)
     if error_response:
         return error_response
     
-    # Decode audio data
+    # ==================== AUDIO DECODING ====================
+    # Decode base64 audio data URI into raw bytes
     decoded_bytes, error_response = decode_audio_data(audio_data_uri)
     if error_response:
         return error_response
 
+    # Initialize temporary file path (will be cleaned up in finally block)
     temp_audio_path = None
 
     try:
         print("[ANTI-ALIAS] Processing request...")
 
-        # Check if model exists
+        # ==================== MODEL VALIDATION ====================
+        # Check if the pretrained neural network model file exists
+        # The model (model_ep5.pth) should be trained for anti-aliasing tasks
         if not os.path.exists(ANTI_ALIASING_MODEL_PATH):
             return JsonResponse({
                 "error": f"Anti-aliasing model not found at {ANTI_ALIASING_MODEL_PATH}. "
                          "Please ensure model_ep5.pth is placed in signal_viewer_app/assets/anti_aliasing/"
             }, status=500)
 
-        # Save temporary audio file
+        # ==================== SAVE TEMPORARY AUDIO FILE ====================
+        # Save decoded audio bytes to a temporary file for processing
         temp_audio_path = save_temp_audio_file(decoded_bytes, filename)
         print(f"[ANTI-ALIAS] Loading audio: {filename}")
 
-        # Load and resample audio (model expects 16kHz)
+        # ==================== LOAD AND RESAMPLE AUDIO ====================
+        # Check if librosa (ML library) is available for audio processing
         if not ML_AVAILABLE:
             return JsonResponse({
                 "error": "librosa is required for anti-aliasing. Please install it."
             }, status=500)
 
+        # Load audio and resample to 16kHz (model's expected input rate)
+        # Limit to 30 seconds to manage memory and processing time
+        # 16kHz is chosen as it's sufficient for speech and compatible with the model
         audio, sr, sr_original = load_and_resample_audio(
             temp_audio_path,
-            target_sr=16000,
-            max_duration=30
+            target_sr=16000,  # Model expects 16kHz input
+            max_duration=30   # Limit processing to 30 seconds
         )
         print(f"[ANTI-ALIAS] Audio loaded: {len(audio)} samples at {sr} Hz")
 
-        # Initialize anti-aliaser
+        # ==================== INITIALIZE ANTI-ALIASING MODEL ====================
         print("[ANTI-ALIAS] Initializing model...")
         try:
+            # Create AudioAntiAliaser instance with specific architecture parameters
+            # These parameters define the neural network structure:
             anti_aliaser = AudioAntiAliaser(
-                model_path=ANTI_ALIASING_MODEL_PATH,
-                device='auto',
-                sample_rate=sr,
-                hidden_size=160,
-                num_residual_blocks=5,
-                num_lstm_layers=2,
-                lstm_hidden_size=224
+                model_path=ANTI_ALIASING_MODEL_PATH,  # Path to pretrained weights
+                device='auto',                         # Auto-detect GPU/CPU
+                sample_rate=sr,                        # Match audio sample rate
+                hidden_size=160,                       # Size of hidden layers in network
+                num_residual_blocks=5,                 # Number of residual blocks for deep learning
+                num_lstm_layers=2,                     # LSTM layers for temporal modeling
+                lstm_hidden_size=224                   # Hidden units in LSTM layers
             )
         except Exception as model_error:
+            # If model fails to load (corrupted file, wrong architecture, etc.)
             error_traceback = traceback.format_exc()
             print(f"[ANTI-ALIAS] Model loading error:\n{error_traceback}")
             return JsonResponse({
@@ -1290,16 +1396,20 @@ def apply_anti_aliasing(request):
                 "details": error_traceback
             }, status=500)
 
-        # Apply anti-aliasing
+        # ==================== APPLY ANTI-ALIASING ====================
         print("[ANTI-ALIAS] Applying anti-aliasing...")
         try:
+            # Process audio through the neural network
+            # Uses chunking to handle long audio files efficiently:
             enhanced_audio = anti_aliaser.enhance_audio_array(
                 audio_array=audio,
                 sample_rate=sr,
-                chunk_size=40000,
-                overlap=4000
+                chunk_size=40000,  # Process in chunks of 40k samples (~2.5s at 16kHz)
+                overlap=4000       # Overlap chunks by 4k samples to avoid edge artifacts
             )
+            # Chunking prevents memory issues and overlap ensures smooth transitions
         except Exception as enhance_error:
+            # If enhancement fails (model inference error, memory issues, etc.)
             error_traceback = traceback.format_exc()
             print(f"[ANTI-ALIAS] Enhancement error:\n{error_traceback}")
             return JsonResponse({
@@ -1309,46 +1419,72 @@ def apply_anti_aliasing(request):
 
         print("[ANTI-ALIAS] ✅ Anti-aliasing complete")
 
-        # Convert enhanced audio to WAV bytes
+        # ==================== CONVERT ENHANCED AUDIO TO BASE64 ====================
+        # Convert the enhanced numpy array to WAV format bytes
         wav_bytes = audio_array_to_wav_bytes(enhanced_audio, sr)
+        # Encode as base64 for JSON transmission
         audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
 
-        # FFT analysis on enhanced audio
+        # ==================== FFT ANALYSIS ====================
+        # Perform Fast Fourier Transform to analyze frequency content
+        # This helps verify that anti-aliasing worked correctly
+        
+        # Compute FFT (converts time domain to frequency domain)
         fft = np.fft.fft(enhanced_audio)
-        fft_magnitude = np.abs(fft[:len(fft) // 2])
+        # Get magnitude (amplitude) of each frequency component
+        fft_magnitude = np.abs(fft[:len(fft) // 2])  # Only positive frequencies
+        # Get corresponding frequencies for each FFT bin
         fft_frequencies = np.fft.fftfreq(len(enhanced_audio), 1 / sr)[:len(fft) // 2]
 
+        # -------------------- Find Maximum Significant Frequency --------------------
+        # Define threshold as 1% of maximum magnitude to filter noise
         threshold = np.max(fft_magnitude) * 0.01
+        # Find frequencies above threshold (significant content)
         significant_freqs = fft_frequencies[fft_magnitude > threshold]
+        # Get maximum frequency with significant content
         max_frequency = np.max(significant_freqs) if len(significant_freqs) > 0 else 0
 
-        # Downsample for plotting
+        # -------------------- Downsample FFT Data for Plotting --------------------
+        # Reduce data points to ~1000 for efficient frontend plotting
         downsample_factor = max(1, len(fft_frequencies) // 1000)
         fft_frequencies_plot = fft_frequencies[::downsample_factor].tolist()
         fft_magnitude_plot = fft_magnitude[::downsample_factor].tolist()
 
-        # Downsample waveform for plotting
+        # -------------------- Downsample Waveform for Plotting --------------------
+        # Reduce waveform to ~10,000 samples for efficient visualization
         waveform_downsample_factor = max(1, len(enhanced_audio) // 10000)
         waveform_plot = enhanced_audio[::waveform_downsample_factor].tolist()
 
+        # ==================== PREPARE RESPONSE ====================
+        # Compile all results into a JSON response
         response_data = {
             "success": True,
+            
+            # Enhanced audio file (base64 encoded WAV)
             "enhanced_audio_b64": audio_b64,
+            
+            # Waveform data for visualization (downsampled)
             "waveform": waveform_plot,
-            "sr": sr,
-            "filename": f"enhanced_{filename}",
-            "duration": float(len(enhanced_audio) / sr),
-            "samples": len(enhanced_audio),
-            "max_frequency": float(max_frequency),
-            "nyquist_frequency": float(sr / 2),
-            "fft_frequencies": fft_frequencies_plot,
-            "fft_magnitudes": fft_magnitude_plot
+            
+            # Audio metadata
+            "sr": sr,                                      # Sample rate
+            "filename": f"enhanced_{filename}",            # New filename
+            "duration": float(len(enhanced_audio) / sr),   # Duration in seconds
+            "samples": len(enhanced_audio),                # Total samples
+            
+            # Frequency analysis data
+            "max_frequency": float(max_frequency),         # Highest significant frequency
+            "nyquist_frequency": float(sr / 2),            # Theoretical maximum frequency
+            "fft_frequencies": fft_frequencies_plot,       # Frequency bins (downsampled)
+            "fft_magnitudes": fft_magnitude_plot           # Magnitudes (downsampled)
         }
 
         print("[ANTI-ALIAS] ✅ Response prepared")
         return JsonResponse(response_data)
 
+    # ==================== ERROR HANDLING ====================
     except Exception as e:
+        # Catch any unexpected errors not handled above
         error_traceback = traceback.format_exc()
         print(f"[ANTI-ALIAS] ❌ Error:\n{error_traceback}")
         return JsonResponse({
@@ -1356,14 +1492,14 @@ def apply_anti_aliasing(request):
             "traceback": error_traceback
         }, status=500)
 
+    # ==================== CLEANUP ====================
     finally:
-        # Cleanup temporary file
+        # Always clean up temporary files, even if errors occurred
         if temp_audio_path and os.path.exists(temp_audio_path):
             try:
                 os.unlink(temp_audio_path)
             except Exception as e:
                 print(f"[ANTI-ALIAS] Cleanup warning: {e}")
-
 
 # Replace the predict_car_speed function in views.py with this improved version
 
