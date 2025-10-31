@@ -11,7 +11,15 @@ Architecture:
     - Residual blocks: Skip connections with dilated convolutions
     - LSTM: Bidirectional temporal modeling
     - Decoder: 4-layer transposed CNN for signal reconstruction
-
+    Input Audio (degraded, 16kHz)
+    ↓
+    Encoder: Downsample for feature extraction (compression)
+        ↓
+    Processing: Learn patterns at compressed scale
+        ↓
+    Decoder: Upsample back to original length (reconstruction)
+        ↓
+    Output Audio (cleaned, still 16kHz but higher quality)
 Model trained to remove aliasing artifacts and enhance audio clarity when dealing
 with undersampled or degraded audio signals.
 """
@@ -79,7 +87,14 @@ class RB(nn.Module):
 
 class M(nn.Module):
     """Main Anti-Aliasing Enhancement Model (CNN-LSTM Hybrid)
+
+    Long Short-Term Memory, is a type of recurrent neural network (RNN)
+    designed to handle sequential data by remembering important information
+    over long periods and forgetting irrelevant data.
     
+    A convolutional neural network (CNN) is a type of artificial neural network
+    used for processing data with a grid-like structure, most commonly images.
+
     Architecture flow:
         Input → Encoder → Residual Blocks → LSTM → Projection → Decoder → Output
     
