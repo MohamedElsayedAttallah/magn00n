@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', function() {
+    // Block 1: Initialization and Global State
+    // 1. Grabbing all the HTML elements
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('ecg-file-input');
     const statusDiv = document.getElementById('ecg-status');
@@ -40,6 +42,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let currentVisualizationMode = 'linear';
 
+    // 3. Defining Constants
     const STEP_SEC = 0.2;
     const INTERVAL_MS = STEP_SEC * 1000;
 

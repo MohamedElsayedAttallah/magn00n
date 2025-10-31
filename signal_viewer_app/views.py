@@ -556,6 +556,8 @@ def detect_voices_view(request):
 @csrf_exempt
 def convert_ecg_dat_to_json(request):
     """Convert ECG .dat/.hea files to JSON format."""
+
+    # Validation and File Retrieval
     if request.method != 'POST':
         return HttpResponseBadRequest("Invalid request method.")
 
@@ -567,11 +569,20 @@ def convert_ecg_dat_to_json(request):
 
     dat_file = request.FILES['dat_file']
     hea_file = request.FILES['hea_file']
+
+    # Temporary File Setup
     temp_dir = tempfile.mkdtemp()
+    #Temporary Directory: Creates a new, empty,
+    # and unique temporary directory on the server's hard drive.Why? The wfdb library needs to read files from a file path;
+    #it can't read them directly from memory. We must save the uploaded files somewhere first.
     temp_dat_path = os.path.join(temp_dir, dat_file.name)
     temp_hea_path = os.path.join(temp_dir, hea_file.name)
     record_stem = os.path.join(temp_dir, os.path.splitext(dat_file.name)[0])
+    #Record Stem: This is a key part. The wfdb library finds files by their "record name" or "stem" (the part without the extension).
+    #record_stem becomes the full path without the extension (e.g., /tmp/tmp123xyz/record1). When you give this to wfdb,
+    # it automatically looks for record1.dat and record1.hea in that location.
 
+    # Core Processing (Try Block)
     try:
         with open(temp_dat_path, 'wb+') as dest:
             for chunk in dat_file.chunks():
@@ -581,7 +592,14 @@ def convert_ecg_dat_to_json(request):
                 dest.write(chunk)
 
         rec = wfdb.rdsamp(record_stem)
+        #THE CORE LOGIC: This is the most important line. It tells the wfdb (Waveform Database)
+        # library to "read samples" (rdsamp) using the record_stem we created.
+        # The library finds the .hea and .dat files, reads them, and returns a result object.
         signals, fields = rec[0], rec[1]
+        #rec[0] (signals): A NumPy array holding all the numerical signal data. Its shape is (number_of_samples, number_of_channels).
+        #rec[1] (fields): A Python dictionary holding all the metadata from the .hea file (e.g., channel names, sampling frequency).
+
+        # Signal Resampling
         original_fs = int(fields.get('fs', 100))
         channel_names = list(fields.get('sig_name', [f"ch{i}" for i in range(signals.shape[1])]))
         processed_signals = signals
@@ -591,11 +609,23 @@ def convert_ecg_dat_to_json(request):
             up = TARGET_SAMPLE_RATE
             down = original_fs
             processed_signals = resample_poly(signals, up, down, axis=0)
+            #intelligently resample the signal. It's like converting a super-high-definition
+            # video down to a standard 1080p.The signal keeps its shape but becomes much smaller and lighter.
             processed_fs = TARGET_SAMPLE_RATE
+            #Action: It gets the original_fs (sampling frequency) and channel_names from the fields dictionary.
+            # It then checks if the frequency is too high (over 1000 Hz).
+            # If it is, it uses resample_poly to downsample the signal to 1000 Hz.
+            # This makes the signal file smaller and faster for the frontend to plot,
+            # without a noticeable loss in visual quality.
 
+        # JSON Response Preparation
         signal_length = processed_signals.shape[0]
         duration = signal_length / processed_fs
         signals_list = np.nan_to_num(processed_signals.T, nan=0.0).astype(float).tolist()
+        #.T transposes the array from (samples, channels) to (channels, samples).
+        # This is the format the JavaScript plotter expects.
+        #.tolist() converts the entire (and very large) NumPy array into a standard Python list,
+        # which can be serialized into JSON.
 
         response_data = {
             "filename": dat_file.name,
@@ -606,6 +636,7 @@ def convert_ecg_dat_to_json(request):
         }
         return JsonResponse(response_data)
 
+    #Error and Cleanup (Except / Finally)
     except Exception as e:
         print(f"WFDB Processing Error: {traceback.format_exc()}")
         return JsonResponse({"error": f"WFDB/Signal Processing Error: {str(e)}"}, status=500)
@@ -1682,10 +1713,15 @@ def predict_car_speed(request):
 @csrf_exempt
 def detect_ecg_abnormality(request):
     """
+    This function is an AI endpoint. It receives a JSON payload
+    of signal data from the browser,runs it through the loaded Keras model,
+    and returns a JSON prediction.
+
     Detect ECG abnormalities using pretrained Keras model.
     Only works with 100Hz ECG signals from PTB-XL dataset.
     """
-    # Validate request
+
+    # Validation and Prerequisite Check
     if request.method != 'POST':
         return HttpResponseBadRequest("Invalid request method.")
 
@@ -1696,6 +1732,8 @@ def detect_ecg_abnormality(request):
             "solution": "Install TensorFlow: pip install tensorflow"
         }, status=500)
 
+
+    # Parsing and Validating the JSON Payload
     try:
         # Parse request body
         data = json.loads(request.body)
@@ -1716,9 +1754,16 @@ def detect_ecg_abnormality(request):
                 "error": f"Model only supports 100Hz signals. Received {fs}Hz.",
                 "suggestion": "Please upload 100Hz ECG records from PTB-XL dataset."
             }, status=400)
+        #It parses the JSON data sent from the JavaScript.
+        # It then performs the most critical check: if fs != 100:
+        # Your AI model was trained only on 100Hz signals. Sending it any other frequency
+        # (like 500Hz) will produce garbage results.
+        # This check stops it and returns a clear error to the user.
 
-        # Convert to numpy array
+
+        # Preparing the Data for the Model
         signals_np = np.array(signals, dtype=np.float32)
+        # Convert to numpy array
 
         # Validate signal shape
         num_channels, num_samples = signals_np.shape
@@ -1734,7 +1779,12 @@ def detect_ecg_abnormality(request):
         if num_channels > 12:
             signals_np = signals_np[:12, :]
             print(f"[ECG_DETECT] Using first 12 channels")
+        # It converts the signals (a Python list) into a NumPy array.
+        # It then validates the number of channels. The model requires a 12-lead (12-channel)
+        # input. If the signal has fewer than 12, it returns an error.
+        # If it has more than 12, it simply slices the array to use only the first 12.
 
+        # Block 4: Loading the Model
         # Check if model exists
         if not os.path.exists(ECG_MODEL_PATH):
             return JsonResponse({
@@ -1759,6 +1809,7 @@ def detect_ecg_abnormality(request):
                 "traceback": error_trace
             }, status=500)
 
+        #Block 5: Running the Prediction
         # Run prediction
         try:
             print("[ECG_DETECT] Running prediction...")
@@ -1768,6 +1819,7 @@ def detect_ecg_abnormality(request):
                   f"({'Normal' if prediction['is_normal'] else 'Abnormal'}, "
                   f"{prediction['confidence']:.2%} confidence)")
 
+        #Block 6: Sending the Success Response
             response_data = {
                 "success": True,
                 "prediction": prediction,
