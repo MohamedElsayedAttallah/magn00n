@@ -282,6 +282,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 nyquistFsOutput.textContent = simulatedFs.toFixed(0);
                 maxFreqOutput.textContent = nyquistLimit.toFixed(0);
+                
+                // ✅ Update plots instantly when slider changes (even when paused)
+                // advanceTime=false ensures we don't move the time window, just refresh with new sample rate
+                console.log(`[EEG] Nyquist slider moved: Fs=${simulatedFs.toFixed(0)} Hz, Nyquist=${nyquistLimit.toFixed(0)} Hz`);
+                updatePlots(false);
             };
         }
 

@@ -687,21 +687,35 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
     // Anti-Aliasing Button Handler
     if (applyAntiAliasingBtn) {
         applyAntiAliasingBtn.onclick = async () => {
-            if (!audioDataURI || !originalAudioData) {
-                updateAntiAliasingStatus("⚠️ Please analyze the audio first before applying anti-aliasing.", 'alert-warning');
+            // ✅ This button applies anti-aliasing to the resampled audio from the slider
+            if (!resampledAudioData || !uploadedFile) {
+                updateAntiAliasingStatus("⚠️ Please move the slider and play resampled audio first.", 'alert-warning');
                 return;
             }
 
             applyAntiAliasingBtn.disabled = true;
-            updateAntiAliasingStatus("🔄 Applying anti-aliasing enhancement... This may take a moment.", 'alert-info');
+            updateAntiAliasingStatus("🔄 Applying anti-aliasing enhancement to resampled audio... This may take a moment.", 'alert-info');
 
             const csrftoken = getCookie('csrftoken');
+            const resampledRate = parseInt(resampleSlider.value);
 
             try {
+                // Convert resampled audio to WAV and create data URI
+                const resampledWavBuffer = audioArrayToWav(resampledAudioData, resampledRate);
+                const resampledBlob = new Blob([resampledWavBuffer], { type: 'audio/wav' });
+                
+                const reader = new FileReader();
+                const resampledDataURI = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result);
+                    reader.readAsDataURL(resampledBlob);
+                });
+
+                console.log(`[ANTI_ALIASING] Applying anti-aliasing to resampled audio at ${resampledRate} Hz (${resampledAudioData.length} samples)`);
+
                 const requestBody = JSON.stringify({
-                    audio_data: audioDataURI,
-                    filename: uploadedFile.name,
-                    sample_rate: currentSampleRate
+                    audio_data: resampledDataURI,
+                    filename: `antialiased_${resampledRate}hz_${uploadedFile.name}`,
+                    sample_rate: resampledRate
                 });
 
                 const response = await fetch('/api/apply_anti_aliasing/', {
@@ -816,8 +830,10 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
     // Detect Gender on Aliased/Downsampled Audio Button Handler
     if (detectGenderAliasedBtn) {
         detectGenderAliasedBtn.onclick = async () => {
-            if (!originalAudioData || !uploadedFile) {
-                updateStatus("⚠️ Please analyze the audio first.", 'alert-warning');
+            // ✅ This button sends the resampled audio (from slider) to gender detection
+            // The slider creates resampledAudioData at the target sample rate
+            if (!resampledAudioData || !uploadedFile) {
+                updateStatus("⚠️ Please move the slider and play resampled audio first.", 'alert-warning');
                 return;
             }
 
@@ -832,37 +848,33 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
             document.getElementById('aliased-female-prob').textContent = '-';
             aliasedGenderResult.scrollIntoView({ behavior: 'smooth', block: 'center' });
             
-            updateStatus(`🎤 Detecting gender on aliased audio (${downsampledRate} Hz)... Please wait.`, 'alert-info');
+            updateStatus(`🎤 Detecting gender on resampled audio (${downsampledRate} Hz)... Please wait.`, 'alert-info');
 
             try {
-                // Step 1: Downsample audio (aliasing)
-                console.log(`[GENDER_ALIASED] Downsampling from ${currentSampleRate} Hz to ${downsampledRate} Hz`);
-                const aliasedAudio = resampleAudioByDuration(
-                    originalAudioData,
-                    currentSampleRate,
-                    downsampledRate,
-                    originalDuration
-                );
+                // Use pre-computed resampled audio from slider
+                // This audio has already been processed with the target sample rate
+                console.log(`[GENDER_ALIASED] Using resampled audio at ${downsampledRate} Hz (${resampledAudioData.length} samples)`);
 
-                // Convert aliased audio to WAV
-                const aliasedWavBuffer = audioArrayToWav(aliasedAudio, downsampledRate);
-                const aliasedBlob = new Blob([aliasedWavBuffer], { type: 'audio/wav' });
+                // Convert resampled audio to WAV
+                const resampledWavBuffer = audioArrayToWav(resampledAudioData, downsampledRate);
+                const resampledBlob = new Blob([resampledWavBuffer], { type: 'audio/wav' });
                 
                 // Create data URI
                 const reader = new FileReader();
-                const aliasedDataURI = await new Promise((resolve) => {
+                const resampledDataURI = await new Promise((resolve) => {
                     reader.onload = () => resolve(reader.result);
-                    reader.readAsDataURL(aliasedBlob);
+                    reader.readAsDataURL(resampledBlob);
                 });
 
-                // Step 2: Detect gender on aliased audio
+                // Detect gender on resampled audio
                 const csrftoken = getCookie('csrftoken');
                 const requestBody = JSON.stringify({
-                    audio_data: aliasedDataURI,
-                    filename: `aliased_${downsampledRate}hz_${uploadedFile.name}`,
+                    audio_data: resampledDataURI,
+                    filename: `resampled_${downsampledRate}hz_${uploadedFile.name}`,
                     target_sample_rate: downsampledRate
                 });
 
+                console.log(`[GENDER_ALIASED] Sending resampled audio to gender detection API`);
                 const response = await fetch('/api/analyze_voices/', {
                     method: 'POST',
                     headers: {
@@ -886,7 +898,7 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                 document.getElementById('aliased-female-prob').textContent = `${(genderData.female_probability * 100).toFixed(1)}%`;
                 
                 updateStatus(
-                    `✅ Gender detected on aliased audio (${downsampledRate} Hz): ${genderData.predicted_gender} (${(genderData.confidence * 100).toFixed(1)}%)`,
+                    `✅ Gender detected on resampled audio (${downsampledRate} Hz): ${genderData.predicted_gender} (${(genderData.confidence * 100).toFixed(1)}%)`,
                     'alert-success'
                 );
 
