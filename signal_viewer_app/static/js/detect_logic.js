@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const dropZone = document.getElementById('drop-zone-detect');
     const fileInput = document.getElementById('detect-file-input');
     const analyzeButton = document.getElementById('analyze-audio-button');
+    const analyzeAliasedButton = document.getElementById('analyze-audio-aliased-btn');
     const playButton = document.getElementById('play-audio-button');
     const statusDiv = document.getElementById('detect-status');
     const playerOriginalDiv = document.getElementById('audio-player-original');
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const resampleSlider = document.getElementById('resample-slider');
     const currentSrDisplay = document.getElementById('current-sr-display');
     const playResampledBtn = document.getElementById('play-resampled-btn');
+    const aliasedDetectionResult = document.getElementById('aliased-detection-result');
 
     // === STATE VARIABLES ===
     let uploadedFile = null;              // User's uploaded audio file
@@ -541,5 +543,97 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         `;
 
         updateStatus(`Playing audio resampled at ${currentRate} Hz (duration: ${resampledDuration.toFixed(2)}s, original: ${originalDuration.toFixed(2)}s)`, 'alert-info');
+
+        // ✅ Enable aliased detection button after resampled audio is played
+        if (analyzeAliasedButton) {
+            analyzeAliasedButton.disabled = false;
+            console.log('✅ Aliased detection button enabled (resampled audio ready)');
+        }
     };
+
+    // Aliased Detection Button Handler - Analyze resampled audio from slider
+    if (analyzeAliasedButton) {
+        analyzeAliasedButton.onclick = async () => {
+            // ✅ This button sends the resampled audio (from slider) to detection model
+            if (!resampledAudioData || !uploadedFile) {
+                updateStatus("⚠️ Please move the slider and play resampled audio first.", 'alert-warning');
+                return;
+            }
+
+            const aliasedSampleRate = parseInt(resampleSlider.value);
+            analyzeAliasedButton.disabled = true;
+            
+            // Show loading indicator
+            aliasedDetectionResult.style.display = 'block';
+            document.getElementById('aliased-detection-class').innerHTML = '<div class="spinner-border text-warning" role="status"><span class="visually-hidden">Loading...</span></div>';
+            document.getElementById('aliased-detection-confidence').textContent = 'Analyzing...';
+            document.getElementById('aliased-detection-comparison').textContent = '-';
+            aliasedDetectionResult.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            updateStatus(`🎯 Detecting on aliased audio (${aliasedSampleRate} Hz)... Please wait.`, 'alert-info');
+
+            try {
+                // Convert resampled audio to WAV and create data URI
+                console.log(`[DETECT_ALIASED] Using resampled audio at ${aliasedSampleRate} Hz (${resampledAudioData.length} samples)`);
+                
+                const resampledWavBuffer = audioArrayToWav(resampledAudioData, aliasedSampleRate);
+                const resampledBlob = new Blob([resampledWavBuffer], { type: 'audio/wav' });
+                
+                const reader = new FileReader();
+                const resampledDataURI = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result);
+                    reader.readAsDataURL(resampledBlob);
+                });
+
+                // Send aliased audio to detection API
+                const csrftoken = getCookie('csrftoken');
+                const requestBody = JSON.stringify({
+                    audio_data: resampledDataURI,
+                    filename: `aliased_${aliasedSampleRate}hz_${uploadedFile.name}`,
+                    target_sample_rate: aliasedSampleRate
+                });
+
+                console.log(`[DETECT_ALIASED] Sending resampled audio to detection API`);
+                const response = await fetch('/api/analyze_audio/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken
+                    },
+                    body: requestBody,
+                });
+
+                if (!response.ok) {
+                    const errorJson = await response.json();
+                    throw new Error(errorJson.error || 'Detection failed');
+                }
+
+                const detectionData = await response.json();
+
+                // Extract predictions from original and aliased results
+                const originalClass = predictionData.predicted_class;
+                const aliasedClass = detectionData.predicted_class;
+                const comparison = originalClass === aliasedClass ? 
+                    `✅ Same as original (${originalClass})` : 
+                    `⚠️ Different: Original was ${originalClass}`;
+
+                // Display aliased detection result
+                document.getElementById('aliased-detection-class').textContent = aliasedClass;
+                document.getElementById('aliased-detection-confidence').textContent = `${(detectionData.confidence * 100).toFixed(1)}%`;
+                document.getElementById('aliased-detection-comparison').textContent = comparison;
+                
+                updateStatus(
+                    `✅ Aliased detection complete (${aliasedSampleRate} Hz): ${aliasedClass} (${(detectionData.confidence * 100).toFixed(1)}%)`,
+                    'alert-success'
+                );
+
+            } catch (error) {
+                console.error('Aliased Detection Error:', error);
+                updateStatus(`❌ Aliased detection failed: ${error.message}`, 'alert-danger');
+                aliasedDetectionResult.style.display = 'none';
+            } finally {
+                analyzeAliasedButton.disabled = false;
+            }
+        };
+    }
 });
