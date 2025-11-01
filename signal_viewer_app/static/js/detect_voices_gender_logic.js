@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', function() {
         console.error('❌ CRITICAL: detect-gender-enhanced-btn NOT FOUND in DOM!');
     }
 
+    // Global Variables used declaration
     let uploadedFile = null;
     let audioDataURI = null;
     let predictionData = null;
@@ -69,6 +70,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const MAX_PLOT_POINTS = 2000;
 
+    // 
     function getCookie(name) {
         let cookieValue = null;
         if (document.cookie && document.cookie !== '') {
@@ -84,11 +86,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return cookieValue;
     }
 
+    // Print for debugging
     function updateStatus(message, alertClass = 'alert-info') {
         statusDiv.className = `alert ${alertClass}`;
         statusDiv.innerHTML = message;
     }
 
+    // Print for debugging
     function updateAntiAliasingStatus(message, alertClass = 'alert-info') {
         if (!antiAliasingStatus) {
             console.error('❌ antiAliasingStatus element not found!');
@@ -99,6 +103,8 @@ document.addEventListener('DOMContentLoaded', function() {
         antiAliasingStatus.style.display = 'block';
     }
 
+
+    // data:image/png;base64,DVBUTDWCD
     function readFileAsDataURI(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -109,7 +115,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function handleFile(file) {
-        const fileName = file.name.toLowerCase();
+        // extension validation (.wav or mp3 only)
+        const fileName = file.name.toLowerCase(); // take filename
         if (!fileName.endsWith('.wav') && !fileName.endsWith('.mp3')) {
             updateStatus("⚠️ Invalid file type. Must be .wav or .mp3.", 'alert-danger');
             analyzeButton.disabled = true;
@@ -117,6 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        // if file too large, limit to 30 seconds
         const fileSizeMB = file.size / (1024 * 1024);
         if (fileSizeMB > 10) {
             updateStatus(`⚠️ Warning: Large file (${fileSizeMB.toFixed(1)}MB). Audio will be limited to 30 seconds for analysis.`, 'alert-warning');
@@ -128,6 +136,8 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             audioDataURI = await readFileAsDataURI(file);
             updateStatus(`Audio file loaded (${file.name}). Ready for analysis.`, 'alert-info');
+
+            // when read, enable analyze and play 
             analyzeButton.disabled = false;
             playButton.disabled = false;
 
@@ -171,6 +181,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // awaiting input 
     if (dropZone && fileInput) {
         dropZone.addEventListener('click', (e) => {
             if (e.target === dropZone || e.target.tagName !== 'INPUT') {
@@ -179,6 +190,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // drop graphics
     if (dropZone) {
         dropZone.ondragover = (e) => {
             e.preventDefault();
@@ -197,7 +209,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         };
     }
-
+    
+    // file input graphics
     if (fileInput) {
         fileInput.onchange = (e) => {
             if (e.target.files.length) {
@@ -215,9 +228,11 @@ document.addEventListener('DOMContentLoaded', function() {
         `;
     };
 
+    // 
     analyzeButton.onclick = async () => {
         await performAnalysis(originalSampleRate);
     };
+
 
     function resampleAudioByDuration(audioData, currentRate, targetRate, duration) {
         const targetSamples = Math.floor(duration * targetRate);
@@ -227,6 +242,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const timePosition = i / targetRate;
             const sourceIndex = timePosition * currentRate;
 
+            // Interpolation
             const index0 = Math.floor(sourceIndex);
             const index1 = Math.min(index0 + 1, audioData.length - 1);
             const fraction = sourceIndex - index0;
@@ -239,11 +255,14 @@ document.addEventListener('DOMContentLoaded', function() {
         return Array.from(resampled);
     }
 
+    // downsample For Plotting
     function downsampleForPlotting(data, maxPoints) {
+        // if so, return since the samples is enough
         if (data.length <= maxPoints) {
             return data;
         }
 
+        // if not, downsample
         const factor = Math.ceil(data.length / maxPoints);
         const downsampled = [];
 
@@ -254,6 +273,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return downsampled;
     }
 
+    // convertion
     function audioArrayToWav(audioData, sampleRate) {
         const numChannels = 1;
         const bitsPerSample = 16;
@@ -294,42 +314,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return buffer;
     }
 
-    function predictGenderFromAudio(audioData, sampleRate) {
-        let zeroCrossings = 0;
-        for (let i = 1; i < audioData.length; i++) {
-            if ((audioData[i] >= 0 && audioData[i-1] < 0) || (audioData[i] < 0 && audioData[i-1] >= 0)) {
-                zeroCrossings++;
-            }
-        }
-
-        const estimatedFrequency = (zeroCrossings / 2) / (audioData.length / sampleRate);
-
-        let maleProbability, femaleProbability;
-
-        if (estimatedFrequency < 130) {
-            maleProbability = 0.75 + Math.random() * 0.20;
-            femaleProbability = 1 - maleProbability;
-        } else if (estimatedFrequency > 200) {
-            femaleProbability = 0.75 + Math.random() * 0.20;
-            maleProbability = 1 - femaleProbability;
-        } else {
-            const centerPoint = 165;
-            const distance = Math.abs(estimatedFrequency - centerPoint);
-            if (estimatedFrequency < centerPoint) {
-                maleProbability = 0.5 + (distance / centerPoint) * 0.3;
-                femaleProbability = 1 - maleProbability;
-            } else {
-                femaleProbability = 0.5 + (distance / centerPoint) * 0.3;
-                maleProbability = 1 - femaleProbability;
-            }
-        }
-
-        return {
-            male: Math.min(0.95, Math.max(0.05, maleProbability)),
-            female: Math.min(0.95, Math.max(0.05, femaleProbability)),
-            estimatedFrequency: estimatedFrequency
-        };
-    }
+    // send to model to processan
 async function performAnalysis(targetSampleRate) {
     if (!uploadedFile || !audioDataURI) {
         updateStatus("⚠️ No audio file loaded.", 'alert-warning');
@@ -339,6 +324,7 @@ async function performAnalysis(targetSampleRate) {
     analyzeButton.disabled = true;
     updateStatus("Analyzing voice for gender detection...", 'alert-warning');
 
+    // delay
     await new Promise(resolve => setTimeout(resolve, 50));
 
     const csrftoken = getCookie('csrftoken');
@@ -359,6 +345,8 @@ async function performAnalysis(targetSampleRate) {
             body: requestBody,
         });
 
+
+        // if error  in response return the type of error
         if (!response.ok) {
             const contentType = response.headers.get('content-type');
             let errorMessage;
@@ -422,10 +410,6 @@ async function performAnalysis(targetSampleRate) {
                 console.error('❌ applyAntiAliasingBtn element is NULL!');
             }
 
-            // Scroll into view
-            if (antiAliasingSection) {
-                antiAliasingSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
         }, 300);
 
     } catch (error) {
@@ -436,6 +420,7 @@ async function performAnalysis(targetSampleRate) {
     }
 }
 
+    // plot the time domain
     function plotTimeDomain(waveform, sr, divElement, title, showMarkers = false) {
         const plotData = downsampleForPlotting(waveform, MAX_PLOT_POINTS);
         const downsampleFactor = Math.ceil(waveform.length / plotData.length);
@@ -481,6 +466,7 @@ async function performAnalysis(targetSampleRate) {
         Plotly.newPlot(divElement, [traceConfig], timeDomainLayout, {responsive: true});
     }
 
+    // plot the freq. domain
     function plotFrequencyDomain(frequencies, magnitudes, divElement, title) {
         const frequencyTrace = {
             x: frequencies,
@@ -533,16 +519,18 @@ async function performAnalysis(targetSampleRate) {
         nyquistSection.style.display = 'block';
     }
 
+    // shows the result in the bar and reders almost everything
     function renderResults(data) {
         const predictionColor = (data.predicted_gender === 'Male') ? '#58a6ff' : '#f78166';
 
+        // Detected Gender: X
         predictionDiv.innerHTML = `
             <h4 style="color: ${predictionColor}; font-weight: bold;">
                 🎤 Detected Gender: ${data.predicted_gender}
             </h4>
-            <p class="text-secondary">Confidence: ${(data.confidence * 100).toFixed(1)}%</p>
         `;
 
+        // bar chart start
         const barTrace = {
             x: ['Male', 'Female'],
             y: [data.male_probability * 100, data.female_probability * 100],
@@ -553,7 +541,7 @@ async function performAnalysis(targetSampleRate) {
         };
 
         const barLayout = {
-            title: "Gender Prediction Probabilities (%)",
+            title: "Gender Prediction Percentage (%)",
             xaxis: { title: 'Gender', color: '#c9d1d9', gridcolor: '#30363d' },
             yaxis: { title: 'Probability (%)', range: [0, 100], color: '#c9d1d9', gridcolor: '#30363d' },
             plot_bgcolor: '#161b22',
@@ -564,7 +552,9 @@ async function performAnalysis(targetSampleRate) {
         };
 
         Plotly.newPlot(probabilitiesDiv, [barTrace], barLayout, {responsive: true});
+        // bar chart end
 
+        // plot time domain
         plotTimeDomain(
             data.waveform,
             data.sr,
@@ -575,6 +565,7 @@ async function performAnalysis(targetSampleRate) {
 
         updateNyquistAnalysis(data.sr);
 
+        // Under Nyquist Freq Update HTML
         debugDiv.innerHTML = `<pre>File: ${data.filename}
 Original Sample Rate: ${originalSampleRate} Hz
 Current Sample Rate: ${data.sr} Hz
@@ -592,15 +583,18 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
 
     resampleSlider.oninput = (e) => {
         const newSampleRate = parseInt(e.target.value);
+        // change the number Hz (Current Sample Rate)
         currentSrDisplay.textContent = `${newSampleRate} Hz`;
 
         if (sliderTimeout) {
             clearTimeout(sliderTimeout);
         }
 
+        // change the number Hz (Adjust Sample Rate)
         document.getElementById('voices-current-sr').textContent = `${newSampleRate} Hz`;
         const statusElement = document.getElementById('voices-sampling-status');
 
+        // exomple: ✓ Over-sampling (Current rate ≥ 14967 Hz)
         if (newSampleRate < nyquistFrequencyRequired) {
             statusElement.textContent = `⚠️ Under-sampling (Current rate < ${nyquistFrequencyRequired.toFixed(0)} Hz)`;
             statusElement.style.color = '#f78166';
@@ -609,6 +603,7 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
             statusElement.style.color = '#c4b5fd';
         }
 
+        // delays resampling audio until the user stops adjusting a slider
         sliderTimeout = setTimeout(() => {
             if (originalAudioData && originalDuration > 0) {
                 resampledAudioData = resampleAudioByDuration(
@@ -643,10 +638,12 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
         const currentRate = parseInt(resampleSlider.value);
         const resampledDuration = resampledAudioData.length / currentRate;
 
+        // convert to wav with the new currentRate
         const wavBuffer = audioArrayToWav(resampledAudioData, currentRate);
         const blob = new Blob([wavBuffer], { type: 'audio/wav' });
         const url = URL.createObjectURL(blob);
 
+        // the audio playing section (Resampled)
         playerResampledDiv.style.display = 'block';
         playerResampledDiv.innerHTML = `
             <h5 style="color: #f78166;">Resampled Audio Player (${currentRate} Hz, Duration: ${resampledDuration.toFixed(2)}s):</h5>
@@ -666,6 +663,7 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
             detectGenderAliasedBtn.removeAttribute('disabled');
             
             // Also try direct DOM manipulation as backup
+            // force-enables a button after a 100ms delay, as a fallback/workaround
             setTimeout(() => {
                 const btn = document.getElementById('detect-gender-aliased-btn');
                 if (btn) {
@@ -751,7 +749,7 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                 enhancedAudioData = json_data;
 
                 // Display enhanced audio player
-                const enhancedAudioSrc = `data:audio/wav;base64,${json_data.enhanced_audio_b64}`;
+                const enhancedAudioSrc = `data:audio/wav;base64,${json_data.enhanced_audio_b64}`; // The sound itself
                 enhancedAudioPlayer.style.display = 'block';
                 enhancedAudioPlayer.innerHTML = `
                     <h5 style="color: #79c0ff;">Enhanced Audio Player (After Anti-Aliasing):</h5>
@@ -772,17 +770,6 @@ Sampling Status: ${data.sr >= nyquistFrequencyRequired ? 'Over-sampling' : 'Unde
                     `Enhanced Audio: Time Domain (${json_data.samples} samples at ${json_data.sr} Hz, Duration: ${json_data.duration.toFixed(2)}s)`,
                     false
                 );
-
-                // Plot enhanced audio frequency domain
-                if (json_data.fft_frequencies && json_data.fft_magnitudes) {
-                    enhancedFrequencyGraphContainer.style.display = 'block';
-                    plotFrequencyDomain(
-                        json_data.fft_frequencies,
-                        json_data.fft_magnitudes,
-                        frequencyDomainEnhancedDiv,
-                        `Enhanced Audio: Frequency Domain (Max Frequency: ${json_data.max_frequency.toFixed(0)} Hz)`
-                    );
-                }
 
                 // Display enhanced audio statistics
                 enhancedAudioStats.style.display = 'block';

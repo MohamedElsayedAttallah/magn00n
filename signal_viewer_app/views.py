@@ -968,22 +968,22 @@ def analyze_voices_gender(request):
                     print(f"[GENDER] {fallback_reason}")
                 else:
                     # Calculate probability based on duration ratios
-                    male_probability = male_duration / total_speech
-                    female_probability = female_duration / total_speech
+                    male_percentage = male_duration / total_speech
+                    female_percentage = female_duration / total_speech
 
                     # Determine predicted gender based on majority duration
                     if male_duration > female_duration:
                         predicted_gender = 'Male'
-                        confidence = male_probability
+                        confidence = male_percentage
                     elif female_duration > male_duration:
                         predicted_gender = 'Female'
-                        confidence = female_probability
+                        confidence = female_percentage
                     else:
                         # Equal durations (rare case)
                         predicted_gender = 'Equal'
                         confidence = 0.5
-                        male_probability = 0.5
-                        female_probability = 0.5
+                        male_percentage = 0.5
+                        female_percentage = 0.5
 
                     print(f"[GENDER] Result: {predicted_gender} ({confidence:.1%})")
 
@@ -1092,32 +1092,32 @@ def analyze_voices_gender(request):
             # -------------------- Calculate Probabilities --------------------
             total_score = male_score + female_score
             if total_score > 0:
-                male_probability = male_score / total_score
-                female_probability = female_score / total_score
+                male_percentage = male_score / total_score
+                female_percentage = female_score / total_score
             else:
                 # If no clear indicators, default to equal probability
-                male_probability = 0.5
-                female_probability = 0.5
+                male_percentage = 0.5
+                female_percentage = 0.5
 
             # -------------------- Confidence Adjustment --------------------
             # Ensure minimum confidence of 0.55 for clear decisions
             # (Avoid appearing too uncertain when we have a clear winner)
-            if male_probability > female_probability:
-                male_probability = max(0.55, male_probability)
-                female_probability = 1 - male_probability
+            if male_percentage > female_percentage:
+                male_percentage = max(0.55, male_percentage)
+                female_percentage = 1 - male_percentage
                 predicted_gender = 'Male'
-                confidence = male_probability
+                confidence = male_percentage
             else:
-                female_probability = max(0.55, female_probability)
-                male_probability = 1 - female_probability
+                female_percentage = max(0.55, female_percentage)
+                male_percentage = 1 - female_percentage
                 predicted_gender = 'Female'
-                confidence = female_probability
+                confidence = female_percentage
 
             # Cap maximum confidence at 0.90 for fallback method
             # (We're less certain than ML-based approach)
-            male_probability = min(0.90, male_probability)
-            female_probability = min(0.90, female_probability)
-            confidence = max(male_probability, female_probability)
+            male_percentage = min(0.90, male_percentage)
+            female_percentage = min(0.90, female_percentage)
+            confidence = max(male_percentage, female_percentage)
 
             print(f"[GENDER] Fallback scores - Male: {male_score:.2f}, Female: {female_score:.2f}")
             print(f"[GENDER] Result: {predicted_gender} ({confidence:.1%})")
@@ -1125,8 +1125,8 @@ def analyze_voices_gender(request):
             # -------------------- Set Duration Estimates --------------------
             # For fallback, estimate durations based on probabilities
             total_speech = len(audio) / sr
-            male_duration = male_probability * total_speech
-            female_duration = female_probability * total_speech
+            male_duration = male_percentage * total_speech
+            female_duration = female_percentage * total_speech
 
         # ==================== PREPARE RESPONSE ====================
         # Compile all analysis results into a JSON response
@@ -1134,8 +1134,8 @@ def analyze_voices_gender(request):
             # Gender prediction results
             "predicted_gender": predicted_gender,
             "confidence": float(confidence),
-            "male_probability": float(male_probability),
-            "female_probability": float(female_probability),
+            "male_probability": float(male_percentage),
+            "female_probability": float(female_percentage),
             
             # Audio data for visualization
             "waveform": audio.tolist(),
