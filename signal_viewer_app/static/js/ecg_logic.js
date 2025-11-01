@@ -762,7 +762,7 @@ function setupControls(data) {
         //Purpose: Optimization helper that applies filtering and resampling to a single channel.
         // Process:
         // Extracts time window from original signal
-        // Applies low-pass filter
+        // Applies low-pass filter.
         // Resamples to simulated frequency
         // Returns processed signal
         const { fs, signals } = globalECGData;
