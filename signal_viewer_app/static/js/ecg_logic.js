@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Block 1: Initialization and Global State
+
     // 1. Grabbing all the HTML elements
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('ecg-file-input');
@@ -36,14 +37,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const aliasedDetectionResults = document.getElementById('ecg-aliased-detection-results');
     const aliasedDetectionContent = document.getElementById('ecg-aliased-detection-content');
 
-    let globalECGData = null;
-    let streamInterval = null;
-    let currentSignalIndex = 0;
-
-    let currentVisualizationMode = 'linear';
+    // Global Variables
+    let globalECGData = null; //Stores the loaded ECG data
+    let streamInterval = null; //Controls the animation timer
+    let currentSignalIndex = 0; //Tracks current position in signal playback
+    let currentVisualizationMode = 'linear'; // Stores active visualization type ('linear', 'polar', etc.)
 
     // 3. Defining Constants
-    const STEP_SEC = 0.2;
+    const STEP_SEC = 0.1;
     const INTERVAL_MS = STEP_SEC * 1000;
 
     // Helper to get CSRF token
@@ -62,6 +63,8 @@ document.addEventListener('DOMContentLoaded', function() {
         return cookieValue;
     }
 
+
+
     // Signal Processing Utilities
     function resampleSignal(signal, actualFs, simulatedFs) {
         if (simulatedFs >= actualFs) {
@@ -76,7 +79,17 @@ document.addEventListener('DOMContentLoaded', function() {
         return resampled;
     }
 
+    // Imagine you're taking a video at 60 frames per second, and you want to make it 30 fps to save space.
+    // Bad approach: Just delete every other fram
+    // Fast movements look jumpy and weird
+    // Things might appear in wrong places
+    // Good approach: Blur the video slightly FIRST, then delete frames
+    // Smooth transitions
+    // No weird artifacts
     function applyLowPassFilter(signal, actualFs, simulatedFs) {
+        // Applies a simple moving average low-pass filter to remove high-frequency components.
+        // Prevent aliasing when downsampling
+        // "Blur the signal before making it smaller, so nothing weird happens"
         const cutoffFreq = simulatedFs / 2;
         if (cutoffFreq >= actualFs / 2) {
             return signal;
@@ -104,6 +117,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function computeRecurrenceMatrix(sig_x, sig_y, bins = 60) {
+       // Creates a 2D histogram showing how signal values recur together (for recurrence plot visualization).
+        // How it works :
+        // Normalizes both signals to [-3, 3] range
+        // Creates a 60×60 grid
+        // Counts how often signal pairs fall into each grid cell
+        // Returns a 2D matrix for heatmap visualization
+
         if (sig_x.length === 0 || sig_y.length === 0) return Array(bins).fill(0).map(() => Array(bins).fill(0).map(() => 0));
 
         const normalize = (arr) => {
@@ -129,6 +149,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function xorDetectionPoints(sig_a, sig_b, fs, timeAxis) {
+        // Detects points where two signals differ significantly (simulates XOR logic).
+        // How it works:
+        // Finds maximum difference between signals
+        // Sets threshold at 20% of max difference
+        // Marks points exceeding threshold as "XOR hits"
+
         const hits = [];
         const THRESHOLD_FACTOR = 0.2;
         const maxDiff = Math.max(...sig_a.map((val, i) => Math.abs(val - sig_b[i])));
@@ -147,7 +173,14 @@ document.addEventListener('DOMContentLoaded', function() {
         statusDiv.innerHTML = message;
     }
 
+
+
     // Drag and Drop
+    // Enables drag-and-drop file upload functionality.
+    // Features:
+    // Click to open file picker
+    // Visual feedback during drag
+    // Handles dropped files
     if (dropZone && fileInput) {
         dropZone.addEventListener('click', () => { fileInput.click(); });
     }
@@ -169,7 +202,15 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 // Replace the entire handleFiles function and setupControls function in ecg_logic.js
-
+//Main file processing function. Uploads ECG files to server for conversion.
+// How it works:
+// Validates that both .dat and .hea files are present
+// Hides any previous detection results
+// Creates FormData with both files
+// Sends POST request to /api/convert_ecg/
+// Receives parsed ECG data (signals, sampling frequency, channel names)
+// Calls setupControls() and initializePlot()
+// Starts signal playback
 function handleFiles(files) {
     if (files.length < 2) {
         updateStatus("⚠️ Please drag and drop both the .dat and .hea files.", 'alert-danger');
@@ -246,6 +287,7 @@ function handleFiles(files) {
 }
 
 function setupControls(data) {
+        //Configures all UI controls based on loaded ECG data.
     console.log('\n[ECG SETUP] ========== SETTING UP CONTROLS ==========');
     console.log('[ECG SETUP] Received fs:', data.fs, 'Hz');
 
@@ -363,17 +405,19 @@ function setupControls(data) {
         detectionContainer.style.display = 'none';
         detectionResults.style.display = 'none';
 
+        detectAliasedBtn.style.display = 'none';
+
         // Enable aliased detection button (can downsample to 100Hz)
-        if (detectAliasedBtn) {
-            detectAliasedBtn.disabled = false;
-            console.log('[ECG SETUP] ✅ Aliased detection button enabled (will downsample to 100Hz)');
-        }
+        // if (detectAliasedBtn) {
+        //     detectAliasedBtn.disabled = false;
+        //     console.log('[ECG SETUP] ✅ Aliased detection button enabled (will downsample to 100Hz)');
+        // }
 
         // Update status message
         setTimeout(() => {
             updateStatus(
                 `✅ ECG loaded successfully (${data.fs}Hz, ${data.channel_names.length} channels). ` +
-                `<small>Tip: Use the aliased detection button to analyze downsampled signals.</small>`,
+                `<small>Tip: HIDING detection button (${data.fs}Hz signal - requires 100Hz).</small>`,
                 'alert-info'
             );
         }, 800);
@@ -385,8 +429,6 @@ function setupControls(data) {
 }
 
     // Setup UI Controls
-   // Replace the setupControls function in ecg_logic.js with this improved version
-
     // NEW: Detection Button Handler
     if (detectBtn) {
         detectBtn.onclick = async function() {
@@ -717,6 +759,12 @@ function setupControls(data) {
 
     // Optimization Helper Function
     function getResampledDataForChannel(chIndex, currentWindowSec) {
+        //Purpose: Optimization helper that applies filtering and resampling to a single channel.
+        // Process:
+        // Extracts time window from original signal
+        // Applies low-pass filter
+        // Resamples to simulated frequency
+        // Returns processed signal
         const { fs, signals } = globalECGData;
         const currentSimulatedFs = parseFloat(nyquistSlider.value);
         const s_idx = Math.floor(currentSignalIndex * fs);
@@ -837,6 +885,7 @@ function setupControls(data) {
             ...layoutUpdates
         };
 
+        // here is plotting the selected signal
         Plotly.react(plotContainer, traces, finalLayout);
 
         if (advanceTime) {
